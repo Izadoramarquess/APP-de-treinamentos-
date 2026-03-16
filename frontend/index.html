@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoTrilha LMS</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header class="app-header hidden" id="main-header">
+        <div class="header-content">
+            <a href="#" class="logo-link" onclick="App.showDashboard()">
+                <img src="logo_transparent.png" alt="Geo Bio Gas & Carbon" class="logo-img">
+            </a>
+            <nav id="main-nav"></nav>
+            <div id="user-info" class="user-info"></div>
+        </div>
+    </header>
+
+    <main id="app-container" class="container">
+        <!-- Views rendered here -->
+    </main>
+
+    <div id="modal-container" class="modal-overlay hidden">
+        <div class="modal-content">
+            <span class="close-modal" onclick="document.getElementById('modal-container').classList.add('hidden')">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
