@@ -5,16 +5,26 @@ from database import Base
 from pydantic import BaseModel
 from typing import List, Optional
 
+class Team(Base):
+    __tablename__ = "teams"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(Text, nullable=True)
+
+    members = relationship("User", back_populates="team")
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
-    role = Column(String, default="user") # 'admin' or 'user'
+    role = Column(String, default="usuario") # 'admin', 'lideranca', 'usuario'
     status = Column(String, default="pending") # 'pending', 'approved', 'rejected'
     department = Column(String, nullable=True)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
 
+    team = relationship("Team", back_populates="members")
     enrollments = relationship("Enrollment", back_populates="user")
     certificates = relationship("Certificate", back_populates="user")
     course_progress = relationship("CourseProgress", back_populates="user")
@@ -106,6 +116,12 @@ class Certificate(Base):
 
 # --- Pydantic Schemas ---
 
+class TeamSchema(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    class Config: from_attributes = True
+
 class MaterialSchema(BaseModel):
     id: int
     title: str
@@ -119,6 +135,7 @@ class QuestionSchema(BaseModel):
     option_b: str
     option_c: str
     option_d: str
+    correct_option: str
     is_final_exam: bool
     timestamp: Optional[float] = None
     class Config: from_attributes = True
@@ -151,4 +168,12 @@ class UserSchema(BaseModel):
     role: str
     status: str
     department: Optional[str] = None
+    team_id: Optional[int] = None
+    class Config: from_attributes = True
+
+class EnrollmentSchema(BaseModel):
+    id: int
+    user_id: int
+    path_id: int
+    enrolled_at: datetime.datetime
     class Config: from_attributes = True

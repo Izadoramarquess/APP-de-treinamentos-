@@ -42,25 +42,35 @@ const App = {
         const nav = document.getElementById('main-nav');
         const userInfo = document.getElementById('user-info');
         if(!this.user) return;
+        
+        let navHtml = '';
         if (this.user.role === 'admin') {
-            nav.innerHTML = `
+            navHtml = `
                 <a class="nav-link" onclick="App.renderAdminUsers()">Usuários</a>
+                <a class="nav-link" onclick="App.renderAdminTeams()">Equipes</a>
                 <a class="nav-link" onclick="App.renderAdminPaths()">Trilhas & Módulos</a>
             `;
-        } else {
-            nav.innerHTML = `
+        } else if (this.user.role === 'lideranca') {
+            navHtml = `
+                <a class="nav-link" onclick="App.renderLeaderDashboard()">Minha Equipe</a>
                 <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>
-                <a class="nav-link">Certificados</a>
+            `;
+        } else {
+            navHtml = `
+                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>
+                <a class="nav-link" onclick="console.log('Certificados em breve')">Certificados</a>
             `;
         }
+        nav.innerHTML = navHtml;
         userInfo.innerHTML = `
-            <span style="margin-right: 1rem; color: var(--text-dim)">Olá, <b>${this.user.username}</b></span>
+            <span style="margin-right: 1rem; color: var(--text-dim)">Olá, <b>${this.user.username}</b> (${this.user.role})</span>
             <button class="btn btn-sm btn-outline" onclick="App.logout()">Sair</button>
         `;
     },
 
     showDashboard() {
         if (this.user.role === 'admin') this.renderAdminUsers();
+        else if (this.user.role === 'lideranca') this.renderLeaderDashboard();
         else this.renderStudentPaths();
     },
 
@@ -134,6 +144,92 @@ const App = {
         this.showView('login');
     },
 
+    // --- LEADER VIEWS ---
+    async renderLeaderDashboard() {
+        const container = document.getElementById('app-container');
+        container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <h2>Painel de Liderança</h2>
+                <button class="btn btn-primary" onclick="App.showAddMemberModal()">+ Adicionar Colaborador</button>
+            </div>
+            <div class="card">
+                <h3>Membros da Equipe</h3>
+                <table id="team-table">
+                    <thead><tr><th>ID</th><th>Nome</th><th>E-mail</th><th>Status</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="5" class="loader">Carregando equipe...</td></tr></tbody>
+                </table>
+            </div>
+        `;
+        const res = await fetch('/admin/users', { headers: this.apiHeaders() });
+        const users = await res.json();
+        const tbody = document.querySelector('#team-table tbody');
+        tbody.innerHTML = '';
+        users.forEach(u => {
+            tbody.innerHTML += `<tr>
+                <td>${u.id}</td>
+                <td><strong>${u.username}</strong></td>
+                <td>${u.email}</td>
+                <td><span class="badge ${u.status==='approved'?'badge-success':'badge-warning'}">${u.status}</span></td>
+                <td><button class="btn btn-secondary btn-sm" onclick="App.showAssignPathModal(${u.id}, '${u.username}')">🎯 Atribuir Trilha</button></td>
+            </tr>`;
+        });
+        if(users.length === 0) tbody.innerHTML = `<tr><td colspan="5">Nenhum colaborador encontrado na sua equipe.</td></tr>`;
+    },
+
+    showAddMemberModal() {
+        const modal = document.getElementById('modal-container');
+        const body = document.getElementById('modal-body');
+        body.innerHTML = `
+            <h3>Novo Colaborador</h3>
+            <form id="add-member-form" style="margin-top: 1rem;">
+                <div class="form-group"><label>Usuário</label><input type="text" id="m-user" class="form-control" required></div>
+                <div class="form-group"><label>E-mail</label><input type="email" id="m-email" class="form-control" required></div>
+                <div class="form-group"><label>Senha Inicial</label><input type="password" id="m-pass" class="form-control" required></div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1rem; width:100%">Cadastrar na Minha Equipe</button>
+            </form>
+        `;
+        document.getElementById('add-member-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const fd = new FormData();
+            fd.append('username', document.getElementById('m-user').value);
+            fd.append('email', document.getElementById('m-email').value);
+            fd.append('password', document.getElementById('m-pass').value);
+            await fetch('/admin/users', { method: 'POST', headers: this.apiHeaders(), body: fd });
+            this.closeModal();
+            this.renderLeaderDashboard();
+        };
+        modal.classList.remove('hidden');
+    },
+
+    async showAssignPathModal(userId, username) {
+        const modal = document.getElementById('modal-container');
+        const body = document.getElementById('modal-body');
+        const pathsRes = await fetch('/paths', { headers: this.apiHeaders() });
+        const paths = await pathsRes.json();
+        
+        body.innerHTML = `
+            <h3>Atribuir Trilha a ${username}</h3>
+            <form id="assign-path-form" style="margin-top: 1rem;">
+                <div class="form-group"><label>Selecione a Trilha</label>
+                    <select id="a-path" class="form-control">
+                        ${paths.map(p => `<option value="${p.id}">${p.title}</option>`).join('')}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1rem; width:100%">Confirmar Atribuição</button>
+            </form>
+        `;
+        document.getElementById('assign-path-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const fd = new FormData();
+            fd.append('user_id', userId);
+            fd.append('path_id', document.getElementById('a-path').value);
+            await fetch('/enrollments', { method: 'POST', headers: this.apiHeaders(), body: fd });
+            this.closeModal();
+            alert("Trilha atribuída com sucesso!");
+        };
+        modal.classList.remove('hidden');
+    },
+
     // --- ADMIN VIEWS ---
     async renderAdminUsers() {
         const container = document.getElementById('app-container');
@@ -154,10 +250,11 @@ const App = {
             const badgeClass = u.role === 'admin' ? 'badge-admin' : (u.status === 'pending' ? 'badge-pending' : (u.status === 'approved' ? 'badge-approved' : 'badge-rejected'));
             tbody.innerHTML += `<tr>
                 <td><strong>${u.username}</strong></td>
-                <td>${u.email}</td><td>${u.department || '-'}</td><td>${u.role.toUpperCase()}</td>
+                <td>${u.email}</td><td>${u.department || '-'}</td><td><b>${u.role.toUpperCase()}</b> ${u.team_id ? '(Equipe '+u.team_id+')' : ''}</td>
                 <td><span class="badge ${badgeClass}">${u.status.toUpperCase()}</span></td>
                 <td>` + (u.status === 'pending' ? `<button class="btn btn-sm btn-outline" onclick="App.changeUserStatus(${u.id}, 'approved')">Aprovar</button>
                     <button class="btn btn-sm btn-danger" onclick="App.changeUserStatus(${u.id}, 'rejected')">Rejeitar</button>` : '') + `
+                    ${this.user.role === 'admin' ? `<button class="btn btn-sm btn-outline" onclick="App.editUserRole(${u.id}, '${u.role}')">⚙️ Cargo</button>` : ''}
                 </td></tr>`;
         });
     },
@@ -166,6 +263,98 @@ const App = {
         const fd = new FormData(); fd.append('new_status', newStatus);
         await fetch(`/admin/users/${id}/status`, { method: 'POST', headers: this.apiHeaders(), body: fd });
         this.renderAdminUsers();
+    },
+
+    async editUserRole(id, currentRole) {
+        const modal = document.getElementById('modal-container');
+        const body = document.getElementById('modal-body');
+        const teamsRes = await fetch('/teams', { headers: this.apiHeaders() });
+        const teams = await teamsRes.json();
+        
+        body.innerHTML = `
+            <h3>Configurar Usuário</h3>
+            <form id="edit-user-form" style="margin-top: 1rem;">
+                <div class="form-group"><label>Papel (Role)</label>
+                    <select id="e-role" class="form-control">
+                        <option value="usuario" ${currentRole==='usuario'?'selected':''}>Usuário</option>
+                        <option value="lideranca" ${currentRole==='lideranca'?'selected':''}>Liderança</option>
+                        <option value="admin" ${currentRole==='admin'?'selected':''}>Administrador</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Equipe</label>
+                    <select id="e-team" class="form-control">
+                        <option value="">Nenhuma</option>
+                        ${teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1rem; width:100%">Salvar Alterações</button>
+            </form>
+        `;
+        document.getElementById('edit-user-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const role = document.getElementById('e-role').value;
+            const teamId = document.getElementById('e-team').value;
+            const fd = new FormData();
+            fd.append('role', role);
+            if(teamId) fd.append('team_id', teamId);
+            else fd.append('team_id', 0); // 0 indica remover equipe no nosso backend improvisado
+
+            await fetch(`/admin/users/${id}/status`, { method: 'POST', headers: this.apiHeaders(), body: fd });
+            this.closeModal();
+            this.renderAdminUsers();
+        };
+        modal.classList.remove('hidden');
+    },
+
+    async renderAdminTeams() {
+        const container = document.getElementById('app-container');
+        container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <h2>Gestão de Equipes</h2>
+                <button class="btn btn-primary" onclick="App.showCreateTeamModal()">+ Nova Equipe</button>
+            </div>
+            <div class="card" style="overflow-x: auto;">
+                <table id="teams-table">
+                    <thead><tr><th>ID</th><th>Nome</th><th>Descrição</th><th>Membros</th></tr></thead>
+                    <tbody><tr><td colspan="4" class="loader">Carregando...</td></tr></tbody>
+                </table>
+            </div>
+        `;
+        const res = await fetch('/teams', { headers: this.apiHeaders() });
+        const teams = await res.json();
+        const tbody = document.querySelector('#teams-table tbody');
+        tbody.innerHTML = '';
+        teams.forEach(t => {
+            tbody.innerHTML += `<tr>
+                <td>${t.id}</td>
+                <td><strong>${t.name}</strong></td>
+                <td>${t.description || '-'}</td>
+                <td>-</td>
+            </tr>`;
+        });
+    },
+
+    showCreateTeamModal() {
+        const modal = document.getElementById('modal-container');
+        const body = document.getElementById('modal-body');
+        body.innerHTML = `
+            <h3>Nova Equipe</h3>
+            <form id="team-form" style="margin-top: 1rem;">
+                <div class="form-group"><label>Nome da Equipe</label><input type="text" id="t-name" class="form-control" required></div>
+                <div class="form-group"><label>Descrição</label><textarea id="t-desc" class="form-control" rows="3"></textarea></div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1rem; width:100%">Salvar Equipe</button>
+            </form>
+        `;
+        document.getElementById('team-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const fd = new FormData();
+            fd.append('name', document.getElementById('t-name').value);
+            fd.append('description', document.getElementById('t-desc').value);
+            await fetch('/teams', { method: 'POST', headers: this.apiHeaders(), body: fd });
+            this.closeModal();
+            this.renderAdminTeams();
+        };
+        modal.classList.remove('hidden');
     },
 
     async renderAdminPaths() {

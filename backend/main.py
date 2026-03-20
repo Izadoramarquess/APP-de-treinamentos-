@@ -48,10 +48,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
-def require_admin(current_user: models.User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin required")
-    return current_user
+def authorize(allowed_roles: List[str]):
+    def decorator(current_user: models.User = Depends(get_current_user)):
+        if current_user.role == "admin":
+            return current_user
+        if current_user.role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Você não tem permissão para realizar esta ação.")
+        return current_user
+    return decorator
 
 # ---------------- Auth ----------------
 @app.post("/register")
@@ -68,17 +72,71 @@ def read_users_me(current_user: models.User = Depends(get_current_user)):
 
 # ---------------- Admin: User Management ----------------
 @app.get("/admin/users", response_model=List[models.UserSchema])
-def list_users(db: Session = Depends(get_db), admin: models.User = Depends(require_admin)):
-    return db.query(models.User).all()
+def list_users(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
+    if current_user.role == "admin":
+        return db.query(models.User).all()
+    # Liderança só vê membros da própria equipe
+    return db.query(models.User).filter(models.User.team_id == current_user.team_id).all()
 
 @app.post("/admin/users/{user_id}/status")
-def update_user_status(user_id: int, new_status: str = Form(...), db: Session = Depends(get_db), admin: models.User = Depends(require_admin)):
+def update_user_status(user_id: int, new_status: str = Form(None), role: str = Form(None), team_id: int = Form(None), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.status = new_status
+    if new_status: user.status = new_status
+    if role: user.role = role
+    if team_id is not None: user.team_id = team_id if team_id != 0 else None
     db.commit()
-    return {"message": f"User status updated to {new_status}"}
+    return {"message": "User updated"}
+
+@app.post("/admin/users", response_model=models.UserSchema)
+def create_user_admin(
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    role: str = Form("usuario"),
+    team_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca"]))
+):
+    # Se for líder, força a equipe dele e a role 'usuario'
+    if current_user.role == "lideranca":
+        team_id = current_user.team_id
+        role = "usuario"
+    
+    from auth import get_password_hash
+    db_user = models.User(
+        username=username,
+        email=email,
+        hashed_password=get_password_hash(password),
+        role=role,
+        team_id=team_id,
+        status="approved"
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.post("/enrollments", response_model=models.EnrollmentSchema)
+def enroll_user(
+    user_id: int = Form(...),
+    path_id: int = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca"]))
+):
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not target_user: raise HTTPException(status_code=404, detail="User not found")
+    
+    # Validação de equipe para líderes
+    if current_user.role == "lideranca" and target_user.team_id != current_user.team_id:
+        raise HTTPException(status_code=403, detail="Você só pode atribuir trilhas a membros da sua equipe.")
+        
+    enrollment = models.Enrollment(user_id=user_id, path_id=path_id)
+    db.add(enrollment)
+    db.commit()
+    db.refresh(enrollment)
+    return enrollment
 
 # ---------------- Learning Paths ----------------
 @app.get("/paths", response_model=List[models.LearningPathSchema])
@@ -86,7 +144,7 @@ def list_paths(db: Session = Depends(get_db)):
     return db.query(models.LearningPath).all()
 
 @app.post("/paths", response_model=models.LearningPathSchema)
-def create_path(title: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: models.User = Depends(require_admin)):
+def create_path(title: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     path = models.LearningPath(title=title, description=description)
     db.add(path)
     db.commit()
@@ -95,7 +153,7 @@ def create_path(title: str = Form(...), description: str = Form(""), db: Session
 
 # ---------------- Courses (Modules) ----------------
 @app.post("/courses/upload/init")
-def init_upload(filename: str, db: Session = Depends(get_db), admin: models.User = Depends(require_admin)):
+def init_upload(filename: str, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     upload_dir = "uploads/temp"
     if not os.path.exists(upload_dir): os.makedirs(upload_dir)
     upload_id = str(uuid.uuid4())
@@ -104,7 +162,7 @@ def init_upload(filename: str, db: Session = Depends(get_db), admin: models.User
     return {"upload_id": upload_id, "filename": filename}
 
 @app.post("/courses/upload/chunk")
-def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_index: int = Form(...), chunk: UploadFile = File(...), db: Session = Depends(get_db), admin: models.User = Depends(require_admin)):
+def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_index: int = Form(...), chunk: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     temp_file_path = os.path.join("uploads/temp", f"{upload_id}_{filename}")
     if not os.path.exists(temp_file_path):
         raise HTTPException(status_code=404, detail="Upload init not found")
@@ -124,7 +182,7 @@ def create_course(
     thumbnail: UploadFile = File(None),
     cert_template: UploadFile = File(None),
     db: Session = Depends(get_db),
-    admin: models.User = Depends(require_admin)
+    current_user: models.User = Depends(authorize(["admin"]))
 ):
     video_url = None
     final_dir = "uploads"
@@ -211,7 +269,7 @@ def add_question(
     course_id: int, 
     question_data: dict, 
     db: Session = Depends(get_db),
-    admin: models.User = Depends(require_admin)
+    current_user: models.User = Depends(authorize(["admin"]))
 ):
     db_question = models.Question(
         course_id=course_id,
@@ -229,7 +287,18 @@ def add_question(
     db.refresh(db_question)
     return db_question
 
-# Static Assets
+# ---------------- Teams ----------------
+@app.get("/teams", response_model=List[models.TeamSchema])
+def list_teams(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
+    return db.query(models.Team).all()
+
+@app.post("/teams", response_model=models.TeamSchema)
+def create_team(name: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    team = models.Team(name=name, description=description)
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    return team
 uploads_path = "uploads"
 if not os.path.exists(uploads_path): os.makedirs(uploads_path)
 app.mount("/uploads", StaticFiles(directory=uploads_path), name="uploads")
