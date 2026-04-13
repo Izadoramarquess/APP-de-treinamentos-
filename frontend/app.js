@@ -3,6 +3,11 @@ const App = {
     user: null,
     init() {
         console.log("App.init called");
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('view') === 'convite' && urlParams.get('token')) {
+            this.showView('invite', urlParams.get('token'));
+            return;
+        }
         const token = localStorage.getItem('token');
         console.log("Token: ", token);
         if (token) this.fetchCurrentUser(token);
@@ -14,7 +19,7 @@ const App = {
             const res = await fetch('/users/me', { headers: this.apiHeaders() });
             if (res.ok) {
                 this.user = await res.json();
-                if (this.user.status !== 'approved') return this.logoutPending();
+                if (this.user.status !== 'ativo' && this.user.status !== 'approved') return this.logoutPending();
                 this.renderNavbar();
                 this.showDashboard();
             } else this.logout();
@@ -34,6 +39,9 @@ const App = {
         } else if (viewName === 'register') {
             document.getElementById('main-header').classList.add('hidden');
             this.renderRegister(container);
+        } else if (viewName === 'invite') {
+            document.getElementById('main-header').classList.add('hidden');
+            this.renderInviteAccept(container, arguments[1]);
         }
     },
 
@@ -47,6 +55,7 @@ const App = {
         if (this.user.role === 'admin') {
             navHtml = `
                 <a class="nav-link" onclick="App.renderAdminUsers()">Usuários</a>
+                <a class="nav-link" onclick="App.renderAdminInvites()">Convites & Logs</a>
                 <a class="nav-link" onclick="App.renderAdminTeams()">Equipes</a>
                 <a class="nav-link" onclick="App.renderAdminPaths()">Trilhas & Módulos</a>
             `;
@@ -130,6 +139,40 @@ const App = {
             const res = await fetch('/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const data = await res.json();
             if (res.ok) { alert(data.message); this.showView('login'); } else alert("Erro no registro");
+        };
+    },
+
+    renderInviteAccept(container, token) {
+        container.innerHTML = `
+            <div class="auth-container">
+                <div class="auth-logo"><img src="logo_transparent.png" class="logo-img"></div>
+                <div class="card">
+                    <h2 style="margin-bottom: 1.5rem">Ativar Convite</h2>
+                    <form id="invite-form">
+                        <input type="hidden" id="i-token" value="${token}">
+                        <div class="form-group"><input type="password" id="i-pass" class="form-control" placeholder="Crie uma nova senha segura" required minlength="6"></div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem">Ativar e Entrar</button>
+                    </form>
+                </div>
+            </div>
+        `;
+        document.getElementById('invite-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button');
+            btn.disabled = true;
+            btn.innerText = "Processando...";
+            const fd = new FormData();
+            fd.append('token', document.getElementById('i-token').value);
+            fd.append('password', document.getElementById('i-pass').value);
+            const res = await fetch('/invite/accept', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (res.ok) { 
+                alert(data.message); 
+                window.location.href = '/'; 
+            } else { 
+                alert(data.detail || "Erro ao ativar"); 
+                btn.disabled = false; btn.innerText = "Ativar e Entrar";
+            }
         };
     },
 
@@ -230,7 +273,51 @@ const App = {
         modal.classList.remove('hidden');
     },
 
-    // --- ADMIN VIEWS ---
+    async renderAdminInvites() {
+        const container = document.getElementById('app-container');
+        container.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 2rem">
+                <h2>Gestão Avançada de Convites & Logs</h2>
+                <button class="btn btn-secondary" onclick="App.renderAdminInvites()">Atualizar Lista</button>
+            </div>
+            <div class="card" style="overflow-x: auto; max-height: 800px">
+                <table id="invites-table">
+                    <thead><tr><th>Usuário</th><th>Status</th><th>Quem convidou</th><th>Data Fim do Convite</th><th>Último Email enviado</th><th>Log Error/Status</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="7" class="loader">Carregando dados globais...</td></tr></tbody>
+                </table>
+            </div>
+        `;
+        const res = await fetch('/admin/invites', { headers: this.apiHeaders() });
+        const users = await res.json();
+        const tbody = document.querySelector('#invites-table tbody');
+        tbody.innerHTML = '';
+        users.forEach(u => {
+            if(u.role === 'admin' && u.status==='ativo') return; // Hide normal active admins from invites list usually
+            const badgeClass = (u.status === 'convite_pendente' || u.status === 'pending') ? 'badge-pending' : (u.status === 'ativo' ? 'badge-approved' : 'badge-rejected');
+            
+            tbody.innerHTML += `<tr>
+                <td><strong>${u.username}</strong><br><small>${u.email}</small></td>
+                <td><span class="badge ${badgeClass}">${u.status.toUpperCase()}</span><br><small>${u.role}</small></td>
+                <td>${u.invited_by || '-'}</td>
+                <td>${u.invite_date ? new Date(u.invite_date).toLocaleDateString() : '-'}</td>
+                <td>${u.last_email_date ? new Date(u.last_email_date).toLocaleString() : '-'}</td>
+                <td>${u.last_email_status ? '<b>'+u.last_email_status+'</b>' : '-'}</td>
+                <td style="display:flex; gap:0.5rem; flex-wrap:wrap">
+                    <button class="btn btn-sm btn-outline" onclick="App.adminAction(${u.id}, 'resend_invite')">Reenviar Email</button>
+                    <button class="btn btn-sm btn-danger" onclick="App.adminAction(${u.id}, 'cancel_invite')">Cancelar</button>
+                    ${u.status !== 'ativo' ? \`<button class="btn btn-sm btn-success" onclick="App.adminAction(${u.id}, 'activate_manual')">Ativar Forçado</button>\` : ''}
+                    <button class="btn btn-sm btn-warning" onclick="App.adminAction(${u.id}, 'remove_team')">Tirar da Equipe</button>
+                </td></tr>`;
+        });
+    },
+
+    async adminAction(id, action) {
+        if(!confirm("Certeza que deseja realizar esta ação ("+action+")?")) return;
+        const res = await fetch(\`/admin/users/\${id}/\${action}\`, { method: 'POST', headers: this.apiHeaders() });
+        if(res.ok) { alert("Ação concluída!"); this.renderAdminInvites(); }
+        else { const d = await res.json(); alert(d.detail || "Erro"); }
+    },
+
     async renderAdminUsers() {
         const container = document.getElementById('app-container');
         container.innerHTML = `
@@ -299,7 +386,12 @@ const App = {
             if(teamId) fd.append('team_id', teamId);
             else fd.append('team_id', 0); // 0 indica remover equipe no nosso backend improvisado
 
-            await fetch(`/admin/users/${id}/status`, { method: 'POST', headers: this.apiHeaders(), body: fd });
+            const res = await fetch(`/admin/users/${id}/status`, { method: 'POST', headers: this.apiHeaders(), body: fd });
+            if (!res.ok) {
+                const errorData = await res.json();
+                alert(errorData.detail || "Erro");
+                return;
+            }
             this.closeModal();
             this.renderAdminUsers();
         };
@@ -325,11 +417,24 @@ const App = {
         const tbody = document.querySelector('#teams-table tbody');
         tbody.innerHTML = '';
         teams.forEach(t => {
+            const numMembers = t.members ? t.members.length : 0;
+            const activeMembers = t.members ? t.members.filter(m => m.status === 'approved').length : 0;
+            const invitedMembers = t.members ? t.members.filter(m => m.status === 'invited').length : 0;
+            
+            let badgesHtml = '';
+            if (numMembers > 0) {
+                badgesHtml = `<span style="font-size: 0.85rem">${numMembers} total </span>`;
+                if (activeMembers > 0) badgesHtml += `<span class="badge badge-approved" style="margin-left:5px">${activeMembers} ativos</span>`;
+                if (invitedMembers > 0) badgesHtml += `<span class="badge badge-pending" style="margin-left:5px">${invitedMembers} convidados</span>`;
+            } else {
+                badgesHtml = '<span style="color:var(--text-dim)">0 membros</span>';
+            }
+
             tbody.innerHTML += `<tr>
                 <td>${t.id}</td>
                 <td><strong>${t.name}</strong></td>
                 <td>${t.description || '-'}</td>
-                <td>-</td>
+                <td>${badgesHtml}</td>
             </tr>`;
         });
     },
@@ -337,22 +442,93 @@ const App = {
     showCreateTeamModal() {
         const modal = document.getElementById('modal-container');
         const body = document.getElementById('modal-body');
+        
+        let teamEmails = [];
+        
+        const renderChips = () => {
+            const container = document.getElementById('t-emails-list');
+            if(!container) return;
+            container.innerHTML = '';
+            teamEmails.forEach((email, index) => {
+                container.innerHTML += `<span class="badge" style="background:var(--primary); color:white; margin: 0.2rem; display:inline-flex; align-items:center; gap:5px;">
+                    ${email} <a href="#" style="color:white; font-weight:bold; text-decoration:none;" onclick="event.preventDefault(); App.removeTeamEmail(${index})">&times;</a>
+                </span>`;
+            });
+        };
+        
+        App.removeTeamEmail = (index) => {
+            teamEmails.splice(index, 1);
+            renderChips();
+        };
+
         body.innerHTML = `
             <h3>Nova Equipe</h3>
             <form id="team-form" style="margin-top: 1rem;">
                 <div class="form-group"><label>Nome da Equipe</label><input type="text" id="t-name" class="form-control" required></div>
+                <div class="form-group"><label>Administrador da Equipe (E-mail corporativo @geobiogas.tech)</label><input type="email" id="t-admin" class="form-control" required></div>
                 <div class="form-group"><label>Descrição</label><textarea id="t-desc" class="form-control" rows="3"></textarea></div>
+                
+                <div class="form-group" style="padding: 1rem; background: var(--bg-body); border-radius: 8px; border: 1px solid var(--border)">
+                    <label>Adicionar Membros (E-mails)</label>
+                    <div style="display:flex; gap: 0.5rem; margin-bottom: 0.5rem">
+                        <input type="email" id="t-email-input" class="form-control" placeholder="exemplo@empresa.com.br">
+                        <button type="button" id="btn-add-email" class="btn btn-secondary">Adicionar</button>
+                    </div>
+                    <div id="t-emails-list" style="display:flex; flex-wrap:wrap; min-height: 30px"></div>
+                </div>
+
                 <button type="submit" class="btn btn-primary" style="margin-top: 1rem; width:100%">Salvar Equipe</button>
             </form>
         `;
+
+        const input = document.getElementById('t-email-input');
+        const btnAdd = document.getElementById('btn-add-email');
+
+        const addEmail = () => {
+            const val = input.value.trim();
+            if(val && val.includes('@') && !teamEmails.includes(val)) {
+                teamEmails.push(val);
+                input.value = '';
+                renderChips();
+            }
+        };
+
+        btnAdd.onclick = addEmail;
+        input.onkeypress = (e) => {
+            if(e.key === 'Enter') {
+                e.preventDefault();
+                addEmail();
+            }
+        };
+
         document.getElementById('team-form').onsubmit = async (e) => {
             e.preventDefault();
+            const btnSubmit = e.target.querySelector('button[type="submit"]');
+            btnSubmit.disabled = true;
+            btnSubmit.innerText = "Salvando...";
+
             const fd = new FormData();
             fd.append('name', document.getElementById('t-name').value);
+            fd.append('team_admin_email', document.getElementById('t-admin').value);
             fd.append('description', document.getElementById('t-desc').value);
-            await fetch('/teams', { method: 'POST', headers: this.apiHeaders(), body: fd });
-            this.closeModal();
-            this.renderAdminTeams();
+            if (teamEmails.length > 0) fd.append('emails', teamEmails.join(','));
+
+            try {
+                const res = await fetch('/teams', { method: 'POST', headers: this.apiHeaders(), body: fd });
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    alert(errorData.detail || "Erro ao salvar equipe.");
+                    btnSubmit.disabled = false;
+                    btnSubmit.innerText = "Salvar Equipe";
+                    return;
+                }
+                this.closeModal();
+                this.renderAdminTeams();
+            } catch(err) {
+                alert("Erro ao salvar equipe.");
+                btnSubmit.disabled = false;
+                btnSubmit.innerText = "Salvar Equipe";
+            }
         };
         modal.classList.remove('hidden');
     },
@@ -486,6 +662,10 @@ const App = {
             <form id="path-form" style="margin-top: 1rem;">
                 <div class="form-group"><label>Título da Trilha</label><input type="text" id="p-title" class="form-control" required></div>
                 <div class="form-group"><label>Descrição</label><textarea id="p-desc" class="form-control" rows="3"></textarea></div>
+                <div class="form-group" style="display:flex; align-items:center; gap:0.5rem; background: var(--bg-body); padding: 0.8rem; border-radius: 6px;">
+                    <input type="checkbox" id="p-standard" style="width: 20px; height: 20px;">
+                    <label style="margin:0; font-weight: 600;">Treinamento Padrão da Empresa (Liberar para novas equipes)</label>
+                </div>
                 <button type="submit" class="btn btn-primary" style="margin-top: 1rem; width:100%">Salvar Trilha</button>
             </form>
         `;
@@ -494,6 +674,7 @@ const App = {
             const fd = new FormData();
             fd.append('title', document.getElementById('p-title').value);
             fd.append('description', document.getElementById('p-desc').value);
+            fd.append('is_standard_training', document.getElementById('p-standard').checked);
             await fetch('/paths', { method: 'POST', headers: this.apiHeaders(), body: fd });
             this.closeModal();
             this.reloadPathsGridAdmin();

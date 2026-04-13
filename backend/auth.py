@@ -45,14 +45,29 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 def register_user(db: Session, user: UserCreate):
+    if not user.email.endswith("@geobiogas.tech"):
+        return {"error": "Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma."}
+
+    existing_user = db.query(models.User).filter(models.User.email == user.email).first()
+    if existing_user:
+        if existing_user.status == "convite_pendente":
+            existing_user.username = user.username
+            existing_user.hashed_password = get_password_hash(user.password)
+            existing_user.department = user.department
+            existing_user.status = "ativo"
+            db.commit()
+            return {"message": "Cadastro concluído. Seu convite foi aceito automaticamente!"}
+        else:
+            return {"error": "E-mail já cadastrado."}
+
     hashed_password = get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
         email=user.email,
         hashed_password=hashed_password,
         department=user.department,
-        role="user",
-        status="pending"
+        role="usuario",
+        status="pendente"
     )
     db.add(db_user)
     db.commit()
@@ -64,8 +79,8 @@ def login_for_access_token(db: Session, form_data: LoginRequest):
     if not user or not verify_password(form_data.password, user.hashed_password):
         return {"error": "Usuário ou senha incorretos"}
         
-    if user.status != "approved":
-        return {"error": "Cadastro pendente ou rejeitado pelo administrador."}
+    if user.status not in ["ativo", "approved"]:
+        return {"error": "Cadastro pendente ou convite expirado."}
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(

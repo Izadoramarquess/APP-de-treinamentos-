@@ -20,20 +20,25 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     role = Column(String, default="usuario") # 'admin', 'lideranca', 'usuario'
-    status = Column(String, default="pending") # 'pending', 'approved', 'rejected'
+    status = Column(String, default="pending") # 'pendente', 'ativo', 'convite_pendente', 'convite_expirado'
     department = Column(String, nullable=True)
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
+    invite_token = Column(String, nullable=True)
+    invite_expires_at = Column(DateTime, nullable=True)
+    invited_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     team = relationship("Team", back_populates="members")
     enrollments = relationship("Enrollment", back_populates="user")
     certificates = relationship("Certificate", back_populates="user")
     course_progress = relationship("CourseProgress", back_populates="user")
+    invited_by = relationship("User", remote_side=[id])
 
 class LearningPath(Base):
     __tablename__ = "learning_paths"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     description = Column(Text)
+    is_standard_training = Column(Boolean, default=False)
     
     courses = relationship("Course", back_populates="path", order_by="Course.order")
     enrollments = relationship("Enrollment", back_populates="path")
@@ -114,13 +119,20 @@ class Certificate(Base):
     user = relationship("User", back_populates="certificates")
     course = relationship("Course", back_populates="certificates")
 
+class EmailLog(Base):
+    __tablename__ = "email_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    recipient_email = Column(String, index=True)
+    sender_email = Column(String, default="esg@geobiogas.tech")
+    cc_email = Column(String, default="izadora.silva@geobiogas.tech")
+    email_type = Column(String)
+    status = Column(String) # 'SUCESSO', 'ERRO'
+    sent_at = Column(DateTime, default=datetime.datetime.utcnow)
+    error_message = Column(Text, nullable=True)
+
 # --- Pydantic Schemas ---
 
-class TeamSchema(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    class Config: from_attributes = True
+
 
 class MaterialSchema(BaseModel):
     id: int
@@ -158,6 +170,7 @@ class LearningPathSchema(BaseModel):
     id: int
     title: str
     description: str
+    is_standard_training: bool = False
     courses: List[CourseSchema] = []
     class Config: from_attributes = True
 
@@ -169,6 +182,19 @@ class UserSchema(BaseModel):
     status: str
     department: Optional[str] = None
     team_id: Optional[int] = None
+    invite_expires_at: Optional[datetime.datetime] = None
+    invited_by_id: Optional[int] = None
+    class Config: from_attributes = True
+
+class EmailLogSchema(BaseModel):
+    id: int
+    recipient_email: str
+    sender_email: str
+    cc_email: str
+    email_type: str
+    status: str
+    sent_at: datetime.datetime
+    error_message: Optional[str] = None
     class Config: from_attributes = True
 
 class EnrollmentSchema(BaseModel):
@@ -176,4 +202,11 @@ class EnrollmentSchema(BaseModel):
     user_id: int
     path_id: int
     enrolled_at: datetime.datetime
+    class Config: from_attributes = True
+
+class TeamSchema(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    members: List[UserSchema] = []
     class Config: from_attributes = True

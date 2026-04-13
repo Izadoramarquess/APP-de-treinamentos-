@@ -83,6 +83,8 @@ def update_user_status(user_id: int, new_status: str = Form(None), role: str = F
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if role == "admin" and not user.email.endswith("@geobiogas.tech"):
+        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
     if new_status: user.status = new_status
     if role: user.role = role
     if team_id is not None: user.team_id = team_id if team_id != 0 else None
@@ -104,6 +106,9 @@ def create_user_admin(
         team_id = current_user.team_id
         role = "usuario"
     
+    if role == "admin" and not email.endswith("@geobiogas.tech"):
+        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+
     from auth import get_password_hash
     db_user = models.User(
         username=username,
@@ -111,7 +116,7 @@ def create_user_admin(
         hashed_password=get_password_hash(password),
         role=role,
         team_id=team_id,
-        status="approved"
+        status="ativo"
     )
     db.add(db_user)
     db.commit()
@@ -138,14 +143,95 @@ def enroll_user(
     db.refresh(enrollment)
     return enrollment
 
+@app.post("/admin/users/{user_id}/resend_invite")
+def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    import uuid, datetime
+    from email_service import send_transactional_email
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user: raise HTTPException(status_code=404)
+    if not user.email.endswith("@geobiogas.tech"): raise HTTPException(status_code=400, detail="Domínio inválido.")
+    user.invite_token = uuid.uuid4().hex
+    user.invite_expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+    user.status = "convite_pendente"
+    user.invited_by_id = current_user.id
+    db.commit()
+    link = f"https://app.geobiogas.tech/?view=convite&token={user.invite_token}"
+    team_name = user.team.name if user.team else 'GeoBiogás'
+    send_transactional_email(db, user.email, "Convite Reenviado", 'invite.html', {'nome_equipe': team_name, 'lista_treinamentos': 'Ver no app', 'link_convite': link}, 'REENVIO_CONVITE')
+    return {"message": "Reenviado com sucesso"}
+
+@app.post("/admin/users/{user_id}/cancel_invite")
+def cancel_invite(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user: raise HTTPException(status_code=404)
+    user.invite_token = None
+    user.status = "convite_expirado"
+    db.commit()
+    return {"message": "Cancelado"}
+
+@app.post("/admin/users/{user_id}/activate_manual")
+def activate_manual(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user: raise HTTPException(status_code=404)
+    user.status = "ativo"
+    db.commit()
+    return {"message": "Ativado"}
+
+@app.post("/admin/users/{user_id}/remove_team")
+def remove_team(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user: raise HTTPException(status_code=404)
+    user.team_id = None
+    if user.role == "lideranca": user.role = "usuario"
+    db.commit()
+    return {"message": "Removido"}
+
+@app.post("/invite/accept")
+def accept_invite(token: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    import datetime
+    from auth import get_password_hash
+    user = db.query(models.User).filter(models.User.invite_token == token).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Token inválido.")
+    if user.invite_expires_at and user.invite_expires_at < datetime.datetime.utcnow():
+        user.status = "convite_expirado"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Token expirado.")
+    user.hashed_password = get_password_hash(password)
+    user.status = "ativo"
+    user.invite_token = None
+    db.commit()
+    return {"message": "Conta ativada com sucesso!"}
+
+@app.get("/admin/invites")
+def list_invites(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
+    users = db.query(models.User).all()
+    out = []
+    for u in users:
+        inviter = u.invited_by.username if u.invited_by else None
+        last_log = db.query(models.EmailLog).filter(models.EmailLog.recipient_email == u.email).order_by(models.EmailLog.sent_at.desc()).first()
+        out.append({
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "role": u.role,
+            "status": u.status,
+            "team_id": u.team_id,
+            "invited_by": inviter,
+            "invite_date": (u.invite_expires_at - datetime.timedelta(days=7)).isoformat() if u.invite_expires_at else None,
+            "last_email_date": last_log.sent_at.isoformat() if last_log else None,
+            "last_email_status": last_log.status if last_log else None
+        })
+    return out
+
 # ---------------- Learning Paths ----------------
 @app.get("/paths", response_model=List[models.LearningPathSchema])
 def list_paths(db: Session = Depends(get_db)):
     return db.query(models.LearningPath).all()
 
 @app.post("/paths", response_model=models.LearningPathSchema)
-def create_path(title: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    path = models.LearningPath(title=title, description=description)
+def create_path(title: str = Form(...), description: str = Form(""), is_standard_training: bool = Form(False), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    path = models.LearningPath(title=title, description=description, is_standard_training=is_standard_training)
     db.add(path)
     db.commit()
     db.refresh(path)
@@ -293,11 +379,70 @@ def list_teams(db: Session = Depends(get_db), current_user: models.User = Depend
     return db.query(models.Team).all()
 
 @app.post("/teams", response_model=models.TeamSchema)
-def create_team(name: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def create_team(name: str = Form(...), description: str = Form(""), emails: str = Form(""), team_admin_email: str = Form(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    if not team_admin_email.endswith("@geobiogas.tech"):
+        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+
     team = models.Team(name=name, description=description)
     db.add(team)
     db.commit()
     db.refresh(team)
+    
+    import uuid
+    import datetime
+    from auth import get_password_hash
+    from email_service import send_transactional_email
+    team_members_ids = []
+
+    def dispatch_team_member(email_addr, is_admin):
+        if not email_addr.endswith("@geobiogas.tech"):
+            raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
+        user = db.query(models.User).filter(models.User.email == email_addr).first()
+        if user:
+            user.team_id = team.id
+            if is_admin: user.role = "lideranca"
+            team_members_ids.append(user.id)
+            send_transactional_email(db, user.email, "Nova Equipe e Treinamentos" if is_admin else "Adicionado à equipe", 'team_added.html', {'nome_equipe': team.name, 'lista_treinamentos': 'Trilhas atualizadas'}, 'NOTIFICACAO')
+        else:
+            random_pass = uuid.uuid4().hex
+            invite_t = uuid.uuid4().hex
+            new_user = models.User(
+                username=email_addr,
+                email=email_addr,
+                hashed_password=get_password_hash(random_pass),
+                role="lideranca" if is_admin else "usuario",
+                status="convite_pendente",
+                team_id=team.id,
+                invite_token=invite_t,
+                invite_expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=7),
+                invited_by_id=current_user.id
+            )
+            db.add(new_user)
+            db.flush()
+            team_members_ids.append(new_user.id)
+            link = f"https://app.geobiogas.tech/?view=convite&token={invite_t}"
+            send_transactional_email(db, new_user.email, "Convite para a plataforma", 'invite.html', {'nome_equipe': team.name, 'lista_treinamentos': 'Trilhas Padrão', 'link_convite': link}, 'CONVITE')
+
+    dispatch_team_member(team_admin_email, True)
+    
+    if emails:
+        email_list = [e.strip() for e in emails.split(",") if e.strip()]
+        for email in email_list:
+            if email == team_admin_email: continue
+            dispatch_team_member(email, False)
+    
+    # Liberar treinamentos padrão
+    standard_paths = db.query(models.LearningPath).filter(models.LearningPath.is_standard_training == True).all()
+    for spath in standard_paths:
+        for member_id in team_members_ids:
+            existing_enrollment = db.query(models.Enrollment).filter(models.Enrollment.user_id == member_id, models.Enrollment.path_id == spath.id).first()
+            if not existing_enrollment:
+                encl = models.Enrollment(user_id=member_id, path_id=spath.id)
+                db.add(encl)
+
+    db.commit()
+    db.refresh(team)
+
     return team
 uploads_path = "uploads"
 if not os.path.exists(uploads_path): os.makedirs(uploads_path)
