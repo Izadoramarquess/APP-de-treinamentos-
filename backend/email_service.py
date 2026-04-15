@@ -120,11 +120,17 @@ def send_transactional_email(db: Session, to_email: str, subject: str, template_
     html_content = render_template(template_name, context)
     
     try:
-        token = get_ms_graph_token()
-        if token:
-            send_via_graph_api(to_email, subject, html_content, token)
-        else:
+        # Tentamos SMTP primeiro, conforme solicitado
+        if SMTP_USER and SMTP_PASS:
             send_via_smtp(to_email, subject, html_content)
+        elif MS_CLIENT_ID and MS_TENANT_ID and MS_CLIENT_SECRET:
+            token = get_ms_graph_token()
+            if token:
+                send_via_graph_api(to_email, subject, html_content, token)
+            else:
+                raise Exception("Falha ao obter token do Microsoft Graph.")
+        else:
+            raise Exception("Nenhuma credencial de e-mail (SMTP ou Graph API) configurada no .env.")
             
         log_email(db, to_email, email_type, "SUCESSO")
         print(f"[E-MAIL] SUCESSO: Enviado para {to_email} (CC: {CC_EMAIL})")

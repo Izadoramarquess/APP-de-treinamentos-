@@ -40,11 +40,13 @@ async def add_cache_headers(request, call_next):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
 
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
+frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+print(f"DEBUG: Serving frontend from: {frontend_path}")
 
 @app.get("/")
 async def serve_index():
     index_path = os.path.join(frontend_path, "index.html")
+    print(f"DEBUG: Index requested. Path: {index_path} - Exists: {os.path.exists(index_path)}")
     if os.path.exists(index_path):
         from fastapi.responses import FileResponse
         return FileResponse(index_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
