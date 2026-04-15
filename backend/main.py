@@ -11,18 +11,44 @@ import shutil
 import uuid
 
 import models, database, auth
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(title="GeoTrilha LMS API")
 
 # CORS Configuration
-origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+if "" in origins: origins.remove("")
+if not origins: origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=True if origins != ["*"] else False, # Credentials not allowed with wildcard
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Cache Middleware for Static Assets
+@app.middleware("http")
+async def add_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/uploads"):
+        response.headers["Cache-Control"] = "public, max-age=86400"
+    elif request.url.path.endswith((".js", ".css", ".ico")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+@app.get("/")
+async def serve_index():
+    index_path = os.path.join(frontend_path, "index.html")
+    if os.path.exists(index_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(index_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return {"message": "Frontend not found"}
 
 def get_db():
     db = database.SessionLocal()
@@ -450,7 +476,8 @@ app.mount("/uploads", StaticFiles(directory=uploads_path), name="uploads")
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
-    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+    # Mount everything else EXCEPT the root which is handled by serve_index
+    app.mount("/", StaticFiles(directory=frontend_path, html=False), name="frontend")
 
 if __name__ == "__main__":
     database.init_db()

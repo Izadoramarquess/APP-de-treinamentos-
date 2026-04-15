@@ -29,7 +29,7 @@ const App = {
     apiHeaders() { return { 'Authorization': `Bearer ${localStorage.getItem('token')}` }; },
     apiJsonHeaders() { return { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' }; },
 
-    showView(viewName) {
+    showView(viewName, extraParam) {
         console.log("showView called with: ", viewName);
         const container = document.getElementById('app-container');
         document.getElementById('main-header').classList.remove('hidden');
@@ -41,7 +41,7 @@ const App = {
             this.renderRegister(container);
         } else if (viewName === 'invite') {
             document.getElementById('main-header').classList.add('hidden');
-            this.renderInviteAccept(container, arguments[1]);
+            this.renderInviteAccept(container, extraParam);
         }
     },
 
@@ -87,15 +87,27 @@ const App = {
     renderLogin(container) {
         container.innerHTML = `
             <div class="auth-container">
-                <div class="auth-logo"><img src="logo_transparent.png" class="logo-img"></div>
-                <div class="card">
-                    <h2 style="margin-bottom: 1.5rem">LMS Acesso Restrito</h2>
+                <div class="auth-logo">
+                    <div class="logo-container" style="justify-content: center;">
+                        <img src="logo_transparent.png" class="logo-img" style="height: 80px;">
+                    </div>
+                </div>
+                <div class="card" style="border: none; box-shadow: var(--shadow-strong);">
+                    <h2 style="margin-bottom: 2rem; color: var(--primary-dark); font-weight: 700;">Acesso à GeoTrilha</h2>
                     <form id="login-form">
-                        <div class="form-group"><input type="text" id="l-user" class="form-control" placeholder="Usuário" required></div>
-                        <div class="form-group"><input type="password" id="l-pass" class="form-control" placeholder="Senha" required></div>
-                        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem">Entrar</button>
+                        <div class="form-group">
+                            <label>Usuário ou E-mail</label>
+                            <input type="text" id="l-user" class="form-control" placeholder="ex: colaborador@geobiogas.tech" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Senha de Acesso</label>
+                            <input type="password" id="l-pass" class="form-control" placeholder="Digite sua senha" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1.5rem; padding: 1rem;">Entrar na Plataforma &rarr;</button>
                     </form>
-                    <p style="margin-top: 1.5rem">Nova admissão? <a style="cursor:pointer; color:var(--primary)" onclick="App.showView('register')">Solicite seu acesso</a></p>
+                    <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+                        <p style="font-size: 0.9rem; color: var(--text-dim)">Primeiro acesso? <a style="cursor:pointer; color:var(--primary); font-weight: 600;" onclick="App.showView('register')">Cadastre-se aqui</a></p>
+                    </div>
                 </div>
             </div>
         `;
@@ -116,17 +128,23 @@ const App = {
     renderRegister(container) {
         container.innerHTML = `
             <div class="auth-container">
-                <div class="auth-logo"><img src="logo_transparent.png" class="logo-img"></div>
-                <div class="card">
-                    <h2 style="margin-bottom: 1.5rem">Solicitar Acesso</h2>
+                <div class="auth-logo">
+                    <div class="logo-container" style="justify-content: center;">
+                        <img src="logo_transparent.png" class="logo-img" style="height: 80px;">
+                    </div>
+                </div>
+                <div class="card" style="border: none; box-shadow: var(--shadow-strong);">
+                    <h2 style="margin-bottom: 2rem; color: var(--primary-dark); font-weight: 700;">Solicitar Cadastro</h2>
                     <form id="reg-form">
-                        <div class="form-group"><input type="text" id="r-user" class="form-control" placeholder="Usuário de Rede" required></div>
-                        <div class="form-group"><input type="text" id="r-dept" class="form-control" placeholder="Departamento" required></div>
-                        <div class="form-group"><input type="email" id="r-email" class="form-control" placeholder="Email Corporativo" required></div>
-                        <div class="form-group"><input type="password" id="r-pass" class="form-control" placeholder="Senha" required></div>
-                        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem">Enviar Solicitação</button>
+                        <div class="form-group"><label>Usuário de Rede</label><input type="text" id="r-user" class="form-control" placeholder="Escolha um nome de usuário" required></div>
+                        <div class="form-group"><label>Departamento</label><input type="text" id="r-dept" class="form-control" placeholder="Qual sua área?" required></div>
+                        <div class="form-group"><label>E-mail Corporativo (@geobiogas.tech)</label><input type="email" id="r-email" class="form-control" placeholder="e-mail@geobiogas.tech" required></div>
+                        <div class="form-group"><label>Senha</label><input type="password" id="r-pass" class="form-control" placeholder="Crie uma senha forte" required></div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1.5rem; padding: 1rem;">Enviar Solicitação</button>
                     </form>
-                    <p style="margin-top: 1.5rem">Já possui cadastro? <a style="cursor:pointer; color:var(--primary)" onclick="App.showView('login')">Fazer Login</a></p>
+                    <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+                        <p style="font-size: 0.9rem; color: var(--text-dim)">Já possui acesso? <a style="cursor:pointer; color:var(--primary); font-weight: 600;" onclick="App.showView('login')">Fazer Login</a></p>
+                    </div>
                 </div>
             </div>
         `;
@@ -305,7 +323,7 @@ const App = {
                 <td style="display:flex; gap:0.5rem; flex-wrap:wrap">
                     <button class="btn btn-sm btn-outline" onclick="App.adminAction(${u.id}, 'resend_invite')">Reenviar Email</button>
                     <button class="btn btn-sm btn-danger" onclick="App.adminAction(${u.id}, 'cancel_invite')">Cancelar</button>
-                    ${u.status !== 'ativo' ? \`<button class="btn btn-sm btn-success" onclick="App.adminAction(${u.id}, 'activate_manual')">Ativar Forçado</button>\` : ''}
+                    ${u.status !== 'ativo' ? `<button class="btn btn-sm btn-success" onclick="App.adminAction(${u.id}, 'activate_manual')">Ativar Forçado</button>` : ''}
                     <button class="btn btn-sm btn-warning" onclick="App.adminAction(${u.id}, 'remove_team')">Tirar da Equipe</button>
                 </td></tr>`;
         });
@@ -313,7 +331,7 @@ const App = {
 
     async adminAction(id, action) {
         if(!confirm("Certeza que deseja realizar esta ação ("+action+")?")) return;
-        const res = await fetch(\`/admin/users/\${id}/\${action}\`, { method: 'POST', headers: this.apiHeaders() });
+        const res = await fetch(`/admin/users/${id}/${action}`, { method: 'POST', headers: this.apiHeaders() });
         if(res.ok) { alert("Ação concluída!"); this.renderAdminInvites(); }
         else { const d = await res.json(); alert(d.detail || "Erro"); }
     },
@@ -628,27 +646,29 @@ const App = {
             let modulesHtml = '';
             p.courses.sort((a,b)=>a.order - b.order).forEach(c => {
                 modulesHtml += `
-                    <div style="background:var(--bg-main); padding:1rem; border:1px solid var(--border); border-radius:6px; margin-top: 0.5rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="background:rgba(255,255,255,0.5); padding:1rem 1.5rem; border:1px solid #eee; border-radius:10px; margin-top: 0.8rem; display:flex; justify-content:space-between; align-items:center; transition: 0.2s;">
                         <div>
-                            <span class="badge badge-pending">Módulo ${c.order}</span>
-                            <strong style="margin-left: 0.5rem">${c.title}</strong>
-                            <span style="margin-left: 1rem; color:var(--text-dim); font-size: 0.85rem;">[${c.questions.length} Questões/Exames]</span>
+                            <span class="badge badge-approved" style="background:#e3faf2; color:#0ca678;">Módulo ${c.order}</span>
+                            <strong style="margin-left: 1rem; color: var(--primary-dark); font-size: 1.05rem;">${c.title}</strong>
+                            <span style="margin-left: 1.5rem; color:var(--text-dim); font-size: 0.85rem; font-weight: 500;">
+                                <i class="icon-question"></i> ${c.questions.length} Questões/Exames
+                            </span>
                         </div>
-                        <button class="btn btn-sm btn-outline" onclick="App.openQuizEditor(${c.id}, '${c.video_url}')">Add Quiz / Exame</button>
+                        <button class="btn btn-sm btn-outline" style="border-radius: 8px;" onclick="App.openQuizEditor(${c.id}, '${c.video_url}')">Gerenciar Quiz &nbsp; &#9881;</button>
                     </div>
                 `;
             });
 
             wrapper.innerHTML += `
-                <div class="card" style="margin-bottom: 2rem;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem;">
+                <div class="card" style="margin-bottom: 2.5rem; border: none; padding: 2.5rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem; padding-bottom: 1.5rem; border-bottom: 2px solid #f8f9fa;">
                         <div>
-                            <h3 style="color:var(--primary-dark)">${p.title}</h3>
-                            <p style="color: var(--text-dim); margin-top: 0.2rem;">${p.description || 'Sem descrição'}</p>
+                            <h3 style="color:var(--primary-dark); font-size: 1.6rem; font-weight: 800; letter-spacing: -0.5px;">${p.title}</h3>
+                            <p style="color: var(--text-dim); margin-top: 0.4rem; font-size: 1rem;">${p.description || 'Gestão de competências e treinamentos ativos.'}</p>
                         </div>
-                        <button class="btn btn-sm btn-secondary" onclick="App.showModuleUpload(${p.id}, '${p.title}')">+ Novo Módulo</button>
+                        <button class="btn btn-sm btn-primary" style="border-radius: 10px; padding: 0.8rem 1.5rem;" onclick="App.showModuleUpload(${p.id}, '${p.title}')">+ Adicionar Módulo</button>
                     </div>
-                    ${modulesHtml || '<p style="color:var(--text-dim)">Nenhum módulo nesta trilha.</p>'}
+                    ${modulesHtml || '<p style="color:var(--text-dim); font-style: italic; text-align: center; padding: 2rem;">Nenhum módulo cadastrado nesta trilha ainda.</p>'}
                 </div>
             `;
         });
@@ -767,13 +787,14 @@ const App = {
         
         paths.forEach(p => {
             grid.innerHTML += `
-                <div class="card" style="display: flex; flex-direction: column;">
-                    <h3 style="color: var(--primary-dark)">${p.title}</h3>
-                    <p style="color: var(--text-dim); margin-top: 0.5rem; margin-bottom: 1.5rem; flex: 1;">${p.description || 'Ementa corporativa.'}</p>
-                    
-                    <div style="background: var(--bg-main); padding: 1rem; border-radius: 6px;">
-                        <button class="btn btn-primary" style="width: 100%" onclick="App.showStudentPathDetail(${p.id})">Acessar Trilha &nbsp; &rarr;</button>
+                <div class="card" style="display: flex; flex-direction: column; border: none; min-height: 250px;">
+                    <div style="margin-bottom: 1rem;">
+                        <h3 style="color: var(--primary-dark); font-size: 1.5rem; font-weight: 700;">${p.title}</h3>
+                        <div style="width: 40px; height: 4px; background: var(--primary); margin-top: 0.5rem; border-radius: 10px;"></div>
                     </div>
+                    <p style="color: var(--text-dim); margin-bottom: 2rem; flex: 1; font-size: 1rem;">${p.description || 'Ementa corporativa detalhada para o desenvolvimento de competências Geo.'}</p>
+                    
+                    <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="App.showStudentPathDetail(${p.id})">Acessar Trilha &nbsp; &rarr;</button>
                 </div>
             `;
         });
@@ -798,15 +819,17 @@ const App = {
         
         sortedCourses.forEach((c) => {
             list.innerHTML += `
-                <div class="card" style="display: flex; gap: 2rem; align-items: stretch;">
-                    <div style="width: 250px; min-height: 140px; background: ${c.thumbnail_url ? 'url('+c.thumbnail_url+') center/cover' : 'var(--bg-main)'}; border-radius: 8px; border: 1px solid var(--border);"></div>
-                    <div style="flex: 1; display:flex; flex-direction: column; justify-content: center;">
-                        <span class="badge badge-pending" style="margin-bottom: 0.5rem; width: fit-content;">Módulo ${c.order}</span>
-                        <h3>${c.title}</h3>
-                        <p style="color: var(--text-dim); margin-top: 0.5rem; font-size: 0.95rem;">${c.description}</p>
+                <div class="card" style="display: flex; gap: 2rem; align-items: stretch; border: none; padding: 1.5rem; margin-bottom: 1.5rem;">
+                    <div style="width: 280px; min-height: 160px; background: ${c.thumbnail_url ? 'url('+c.thumbnail_url+') center/cover' : 'var(--primary-dark)'}; border-radius: var(--radius); overflow: hidden; position: relative;">
+                        ${!c.thumbnail_url ? '<div style="position: absolute; top:50%; left:50%; transform:translate(-50%, -50%); color: white; opacity: 0.3;"><img src="logo_transparent.png" style="width: 80px;"></div>' : ''}
                     </div>
-                    <div style="align-self: center;">
-                        <button class="btn btn-primary" style="padding: 1rem 2rem; font-size: 1.1rem" onclick="App.openCoursePlayer(${c.id})">Iniciar Aula &nbsp;&#9658;</button>
+                    <div style="flex: 1; display:flex; flex-direction: column; justify-content: center;">
+                        <span class="badge badge-approved" style="margin-bottom: 0.8rem; width: fit-content;">Módulo ${c.order}</span>
+                        <h3 style="font-size: 1.4rem; color: var(--primary-dark);">${c.title}</h3>
+                        <p style="color: var(--text-dim); margin-top: 0.5rem; font-size: 1rem;">${c.description || 'Nenhuma descrição fornecida.'}</p>
+                    </div>
+                    <div style="align-self: center; padding-left: 2rem; border-left: 1px solid var(--border);">
+                        <button class="btn btn-primary" style="padding: 1.2rem 2.5rem; font-size: 1.1rem; border-radius: 12px;" onclick="App.openCoursePlayer(${c.id})">Iniciar Aula &nbsp; &#9658;</button>
                     </div>
                 </div>
             `;
@@ -926,4 +949,3 @@ const App = {
 };
 
 document.addEventListener('DOMContentLoaded', () => App.init());
-App.init();
