@@ -9,11 +9,17 @@ import uvicorn
 import os
 import shutil
 import uuid
+import datetime
+import secrets
 
 import models, database, auth
+from auth import get_password_hash
+from auth_reset import reset_router
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
 
 app = FastAPI(title="GeoTrilha LMS API")
 
@@ -29,6 +35,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(reset_router)
 
 # Cache Middleware for Static Assets
 @app.middleware("http")
@@ -119,17 +127,68 @@ def update_user_status(user_id: int, new_status: str = Form(None), role: str = F
     db.commit()
     return {"message": "User updated"}
 
-@app.post("/admin/users", response_model=models.UserSchema)
-def create_user_admin(
+@app.post("/admin/users/{user_id}/role")
+def update_user_role(user_id: int, role: str = Form(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if role == "admin" and not user.email.endswith("@geobiogas.tech"):
+        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+    user.role = role
+    db.commit()
+    return {"message": "Role atualizado com sucesso"}
+
+@app.post("/admin/users/{user_id}/reset-password")
+def admin_reset_password(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.hashed_password = get_password_hash("Mudar@123")
+    user.must_change_password = True
+    
+    reset_token = secrets.token_urlsafe(32)
+    user.reset_token = reset_token
+    user.reset_token_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    
+    db.commit()
+    
+    base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
+    reset_link = f"{base_url}/?view=reset&token={reset_token}"
+    
+    return {
+        "message": "Senha resetada para o padrão (Mudar@123). O usuário deverá trocar no próximo acesso.",
+        "reset_link": reset_link
+    }
+
+@app.delete("/admin/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="Voc no pode excluir seu prprio usurio.")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usurio no encontrado")
+    
+    # Clean up dependent records
+    db.query(models.Enrollment).filter(models.Enrollment.user_id == user.id).delete()
+    db.query(models.ModuleProgress).filter(models.ModuleProgress.user_id == user.id).delete()
+    db.query(models.Certificate).filter(models.Certificate.user_id == user.id).delete()
+    
+    # Unlink invited_by gracefully
+    db.query(models.User).filter(models.User.invited_by_id == user.id).update({"invited_by_id": None})
+    
+    db.delete(user)
+    db.commit()
+    return {"message": "Usurio excludo com sucesso"}
+
+@app.post("/admin/users/invite")
+def invite_user_admin(
     username: str = Form(...),
     email: str = Form(...),
-    password: str = Form(...),
     role: str = Form("usuario"),
     team_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
 ):
-    # Se for líder, força a equipe dele e a role 'usuario'
     if current_user.role == "lideranca":
         team_id = current_user.team_id
         role = "usuario"
@@ -137,19 +196,32 @@ def create_user_admin(
     if role == "admin" and not email.endswith("@geobiogas.tech"):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
 
+    existing_user = db.query(models.User).filter(models.User.email == email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="E-mail já cadastrado no sistema.")
+
+    invite_token = secrets.token_urlsafe(32)
+    
     from auth import get_password_hash
     db_user = models.User(
         username=username,
         email=email,
-        hashed_password=get_password_hash(password),
+        hashed_password=get_password_hash(uuid.uuid4().hex),
         role=role,
         team_id=team_id,
-        status="ativo"
+        status="convite_pendente",
+        invite_token=invite_token,
+        invite_expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=7),
+        invited_by_id=current_user.id
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    return db_user
+    
+    base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
+    invite_link = f"{base_url}/?view=convite&token={invite_token}"
+    
+    return {"invite_link": invite_link}
 
 @app.post("/enrollments", response_model=models.EnrollmentSchema)
 def enroll_user(
@@ -172,21 +244,27 @@ def enroll_user(
     return enrollment
 
 @app.post("/admin/users/{user_id}/resend_invite")
-def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    import uuid, datetime
-    from email_service import send_transactional_email
+def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user: raise HTTPException(status_code=404)
+    
+    # Validação para liderança
+    if current_user.role == "lideranca" and user.team_id != current_user.team_id:
+        raise HTTPException(status_code=403, detail="Você só pode reenviar convites para membros da sua própria equipe.")
+        
     if not user.email.endswith("@geobiogas.tech"): raise HTTPException(status_code=400, detail="Domínio inválido.")
-    user.invite_token = uuid.uuid4().hex
+    
+    invite_token = secrets.token_urlsafe(32)
+    user.invite_token = invite_token
     user.invite_expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=7)
     user.status = "convite_pendente"
     user.invited_by_id = current_user.id
     db.commit()
-    link = f"https://app.geobiogas.tech/?view=convite&token={user.invite_token}"
-    team_name = user.team.name if user.team else 'GeoBiogás'
-    send_transactional_email(db, user.email, "Convite Reenviado", 'invite.html', {'nome_equipe': team_name, 'lista_treinamentos': 'Ver no app', 'link_convite': link}, 'REENVIO_CONVITE')
-    return {"message": "Reenviado com sucesso"}
+    
+    base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
+    invite_link = f"{base_url}/?view=convite&token={invite_token}"
+    
+    return {"message": "Reenviado com sucesso", "invite_link": invite_link}
 
 @app.post("/admin/users/{user_id}/cancel_invite")
 def cancel_invite(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
@@ -216,11 +294,9 @@ def remove_team(user_id: int, db: Session = Depends(get_db), current_user: model
 
 @app.post("/invite/accept")
 def accept_invite(token: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    import datetime
-    from auth import get_password_hash
     user = db.query(models.User).filter(models.User.invite_token == token).first()
     if not user:
-        raise HTTPException(status_code=400, detail="Token inválido.")
+        raise HTTPException(status_code=400, detail="Token invlido.")
     if user.invite_expires_at and user.invite_expires_at < datetime.datetime.utcnow():
         user.status = "convite_expirado"
         db.commit()
@@ -228,6 +304,14 @@ def accept_invite(token: str = Form(...), password: str = Form(...), db: Session
     user.hashed_password = get_password_hash(password)
     user.status = "ativo"
     user.invite_token = None
+    user.invite_expires_at = None
+    
+    # If they are accepting via UI, we should still allow standard pw but normally they'd type it.
+    if password == "Mudar@123":
+        user.must_change_password = True
+    else:
+        user.must_change_password = False
+        
     db.commit()
     return {"message": "Conta ativada com sucesso!"}
 
@@ -265,8 +349,73 @@ def create_path(title: str = Form(...), description: str = Form(""), is_standard
     db.refresh(path)
     return path
 
-# ---------------- Courses (Modules) ----------------
-@app.post("/courses/upload/init")
+@app.put("/paths/{path_id}", response_model=models.LearningPathSchema)
+def update_path(path_id: int, title: str = Form(...), description: str = Form(""), is_standard_training: bool = Form(False), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
+    if not path:
+        raise HTTPException(status_code=404, detail="Trilha no encontrada")
+    path.title = title
+    path.description = description
+    path.is_standard_training = is_standard_training
+    db.commit()
+    db.refresh(path)
+    return path
+
+@app.delete("/paths/{path_id}")
+def delete_path(path_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
+    if not path:
+        raise HTTPException(status_code=404, detail="Trilha no encontrada")
+    db.query(models.Enrollment).filter(models.Enrollment.path_id == path_id).delete()
+    for course in db.query(models.Course).filter(models.Course.path_id == path.id).all():
+        delete_course(course.id, db, current_user)
+    db.delete(path)
+    db.commit()
+    return {"message": "Trilha excluda com sucesso"}
+
+# ---------------- Courses ----------------
+@app.get("/paths/{path_id}/courses", response_model=List[models.CourseSchema])
+def list_courses(path_id: int, db: Session = Depends(get_db)):
+    return db.query(models.Course).filter(models.Course.path_id == path_id).order_by(models.Course.order).all()
+
+@app.post("/paths/{path_id}/courses", response_model=models.CourseSchema)
+def create_course(path_id: int, title: str = Form(...), description: str = Form(...), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    course = models.Course(path_id=path_id, title=title, description=description, order=order)
+    db.add(course)
+    db.commit()
+    db.refresh(course)
+    return course
+
+@app.put("/courses/{course_id}", response_model=models.CourseSchema)
+def update_course(course_id: int, title: str = Form(...), description: str = Form(...), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Curso no encontrado")
+    course.title = title
+    course.description = description
+    course.order = order
+    db.commit()
+    db.refresh(course)
+    return course
+
+@app.delete("/courses/{course_id}")
+def delete_course(course_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Curso no encontrado")
+    # Delete dependent modules
+    for module in db.query(models.Module).filter(models.Module.course_id == course.id).all():
+        delete_module(module.id, db, current_user)
+    db.delete(course)
+    db.commit()
+    return {"message": "Curso excludo com sucesso"}
+
+# ---------------- Modules (formerly Courses) ----------------
+@app.get("/courses/{course_id}/modules", response_model=List[models.ModuleSchema])
+def list_modules(course_id: int, db: Session = Depends(get_db)):
+    return db.query(models.Module).filter(models.Module.course_id == course_id).order_by(models.Module.order).all()
+
+@app.post("/modules/upload/init")
 def init_upload(filename: str, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     upload_dir = "uploads/temp"
     if not os.path.exists(upload_dir): os.makedirs(upload_dir)
@@ -275,7 +424,7 @@ def init_upload(filename: str, db: Session = Depends(get_db), current_user: mode
     with open(temp_file_path, "wb") as f: pass
     return {"upload_id": upload_id, "filename": filename}
 
-@app.post("/courses/upload/chunk")
+@app.post("/modules/upload/chunk")
 def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_index: int = Form(...), chunk: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     temp_file_path = os.path.join("uploads/temp", f"{upload_id}_{filename}")
     if not os.path.exists(temp_file_path):
@@ -284,9 +433,9 @@ def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_in
         f.write(chunk.file.read())
     return {"status": "success", "chunk_index": chunk_index}
 
-@app.post("/paths/{path_id}/courses", response_model=models.CourseSchema)
-def create_course(
-    path_id: int,
+@app.post("/courses/{course_id}/modules", response_model=models.ModuleSchema)
+def create_module(
+    course_id: int,
     title: str = Form(...), 
     description: str = Form(...), 
     order: int = Form(1),
@@ -323,8 +472,8 @@ def create_course(
             shutil.copyfileobj(cert_template.file, buffer)
         cert_path = f"/uploads/{cert_filename}"
 
-    course = models.Course(
-        path_id=path_id,
+    module = models.Module(
+        course_id=course_id,
         order=order,
         title=title, 
         description=description, 
@@ -333,10 +482,48 @@ def create_course(
         certificate_template_url=cert_path,
         validity_months=validity_months
     )
-    db.add(course)
+    db.add(module)
     db.commit()
-    db.refresh(course)
-    return course
+    db.refresh(module)
+    return module
+
+@app.put("/modules/{module_id}", response_model=models.ModuleSchema)
+def update_module(
+    module_id: int,
+    title: str = Form(...), 
+    description: str = Form(...), 
+    order: int = Form(1),
+    validity_months: int = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin"]))
+):
+    module = db.query(models.Module).filter(models.Module.id == module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail="Mdulo no encontrado")
+    
+    module.title = title
+    module.description = description
+    module.order = order
+    module.validity_months = validity_months
+    
+    db.commit()
+    db.refresh(module)
+    return module
+
+@app.delete("/modules/{module_id}")
+def delete_module(module_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+    module = db.query(models.Module).filter(models.Module.id == module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail="Mdulo no encontrado")
+        
+    db.query(models.Question).filter(models.Question.module_id == module.id).delete()
+    db.query(models.Material).filter(models.Material.module_id == module.id).delete()
+    db.query(models.ModuleProgress).filter(models.ModuleProgress.module_id == module.id).delete()
+    db.query(models.Certificate).filter(models.Certificate.module_id == module.id).delete()
+    
+    db.delete(module)
+    db.commit()
+    return {"message": "Mdulo excludo com sucesso"}
 
 # ---------------- Streaming ----------------
 def send_bytes_range_requests(file_obj, start: int, end: int, chunk_size: int = 10_000_000):
@@ -378,15 +565,15 @@ def get_video(filename: str, range: str = Header(None)):
         raise HTTPException(status_code=400, detail="Invalid Range Header")
 
 # ---------------- Quizzes & Exams ----------------
-@app.post("/courses/{course_id}/questions", response_model=models.QuestionSchema)
+@app.post("/modules/{module_id}/questions", response_model=models.QuestionSchema)
 def add_question(
-    course_id: int, 
+    module_id: int, 
     question_data: dict, 
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
     db_question = models.Question(
-        course_id=course_id,
+        module_id=module_id,
         text=question_data["text"],
         option_a=question_data["option_a"],
         option_b=question_data["option_b"],
@@ -416,10 +603,6 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
     db.commit()
     db.refresh(team)
     
-    import uuid
-    import datetime
-    from auth import get_password_hash
-    from email_service import send_transactional_email
     team_members_ids = []
 
     def dispatch_team_member(email_addr, is_admin):
@@ -430,10 +613,9 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             user.team_id = team.id
             if is_admin: user.role = "lideranca"
             team_members_ids.append(user.id)
-            send_transactional_email(db, user.email, "Nova Equipe e Treinamentos" if is_admin else "Adicionado à equipe", 'team_added.html', {'nome_equipe': team.name, 'lista_treinamentos': 'Trilhas atualizadas'}, 'NOTIFICACAO')
         else:
             random_pass = uuid.uuid4().hex
-            invite_t = uuid.uuid4().hex
+            invite_t = secrets.token_urlsafe(32)
             new_user = models.User(
                 username=email_addr,
                 email=email_addr,
@@ -448,8 +630,6 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             db.add(new_user)
             db.flush()
             team_members_ids.append(new_user.id)
-            link = f"https://app.geobiogas.tech/?view=convite&token={invite_t}"
-            send_transactional_email(db, new_user.email, "Convite para a plataforma", 'invite.html', {'nome_equipe': team.name, 'lista_treinamentos': 'Trilhas Padrão', 'link_convite': link}, 'CONVITE')
 
     dispatch_team_member(team_admin_email, True)
     
