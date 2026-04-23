@@ -108,15 +108,15 @@ def read_users_me(current_user: models.User = Depends(get_current_user)):
 
 @app.post("/auth/change-password")
 def change_password(
-    password: str = Form(...),
+    new_password: str = Form(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca", "colaborador", "usuario", "user"]))
 ):
-    if len(password) < 6:
+    if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 6 caracteres.")
-    if password == "Mudar@123":
+    if new_password == "Mudar@123":
         raise HTTPException(status_code=400, detail="Escolha uma senha diferente da temporária.")
-    current_user.hashed_password = get_password_hash(password)
+    current_user.hashed_password = get_password_hash(new_password)
     current_user.must_change_password = False
     db.commit()
     return {"message": "Senha alterada com sucesso!"}
