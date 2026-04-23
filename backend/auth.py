@@ -11,7 +11,7 @@ from fastapi.security import OAuth2PasswordBearer
 # Security settings
 SECRET_KEY = "super-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
 class Token(BaseModel):
     access_token: str
@@ -68,7 +68,7 @@ def register_user(db: Session, user: UserCreate):
         email=user.email,
         hashed_password=hashed_password,
         department=user.department,
-        role="usuario",
+        role="colaborador",
         status="pending"
     )
     db.add(db_user)

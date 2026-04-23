@@ -121,6 +121,82 @@ def change_password(
     db.commit()
     return {"message": "Senha alterada com sucesso!"}
 
+# ---------------- Dashboard & Metrics ----------------
+@app.get("/dashboard/stats")
+def dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca"]))
+):
+    total_users    = db.query(models.User).filter(models.User.status.in_(["ativo","approved"])).count()
+    pending_users  = db.query(models.User).filter(models.User.status == "pending").count()
+    total_paths    = db.query(models.LearningPath).count()
+    total_modules  = db.query(models.Module).count()
+    completions    = db.query(models.ModuleProgress).filter(models.ModuleProgress.is_completed == True).count()
+    pending_invites= db.query(models.User).filter(models.User.status == "convite_pendente").count()
+    return {
+        "total_users": total_users,
+        "pending_users": pending_users,
+        "total_paths": total_paths,
+        "total_modules": total_modules,
+        "completions": completions,
+        "pending_invites": pending_invites
+    }
+
+# ---------------- Progress Tracking ----------------
+@app.post("/modules/{module_id}/complete")
+def complete_module(
+    module_id: int,
+    score: float = Form(0.0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    progress = db.query(models.ModuleProgress).filter(
+        models.ModuleProgress.module_id == module_id,
+        models.ModuleProgress.user_id == current_user.id
+    ).first()
+    if not progress:
+        progress = models.ModuleProgress(user_id=current_user.id, module_id=module_id)
+        db.add(progress)
+    progress.is_completed = True
+    progress.score_final = score
+    progress.completed_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Módulo concluído!", "completed": True}
+
+@app.get("/paths/{path_id}/progress")
+def get_path_progress(
+    path_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
+    if not path: raise HTTPException(404, "Trilha não encontrada")
+    total_modules = 0
+    completed_modules = 0
+    for course in path.courses:
+        for module in course.modules:
+            total_modules += 1
+            progress = db.query(models.ModuleProgress).filter(
+                models.ModuleProgress.module_id == module.id,
+                models.ModuleProgress.user_id == current_user.id,
+                models.ModuleProgress.is_completed == True
+            ).first()
+            if progress: completed_modules += 1
+    pct = round((completed_modules / total_modules * 100) if total_modules > 0 else 0)
+    return {"total": total_modules, "completed": completed_modules, "percent": pct}
+
+@app.get("/courses/{course_id}/progress")
+def get_course_progress(
+    course_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    progresses = db.query(models.ModuleProgress).join(models.Module).filter(
+        models.Module.course_id == course_id,
+        models.ModuleProgress.user_id == current_user.id
+    ).all()
+    return [{"module_id": p.module_id, "completed": p.is_completed, "score": p.score_final} for p in progresses]
+
 # ---------------- Admin: User Management ----------------
 @app.get("/admin/users", response_model=List[models.UserSchema])
 def list_users(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
