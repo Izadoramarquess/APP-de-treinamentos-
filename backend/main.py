@@ -168,7 +168,7 @@ def admin_reset_password(user_id: int, db: Session = Depends(get_db), current_us
     
     db.commit()
     
-    base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
     reset_link = f"{base_url}/?view=reset&token={reset_token}"
     
     return {"reset_link": reset_link}
@@ -231,7 +231,7 @@ def invite_user_admin(
     db.commit()
     db.refresh(db_user)
     
-    base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
     invite_link = f"{base_url}/?view=convite&token={invite_token}"
     
     return {"invite_link": invite_link}
@@ -274,7 +274,7 @@ def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: mod
     user.invited_by_id = current_user.id
     db.commit()
     
-    base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
     invite_link = f"{base_url}/?view=convite&token={invite_token}"
     
     return {"message": "Reenviado com sucesso", "invite_link": invite_link}
