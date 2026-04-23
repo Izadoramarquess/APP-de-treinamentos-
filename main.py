@@ -121,6 +121,200 @@ def change_password(
     db.commit()
     return {"message": "Senha alterada com sucesso!"}
 
+# ---------------- Dashboard & Metrics ----------------
+@app.get("/dashboard/stats")
+def dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca"]))
+):
+    total_users    = db.query(models.User).filter(models.User.status.in_(["ativo","approved"])).count()
+    pending_users  = db.query(models.User).filter(models.User.status == "pending").count()
+    total_paths    = db.query(models.LearningPath).count()
+    total_modules  = db.query(models.Module).count()
+    completions    = db.query(models.ModuleProgress).filter(models.ModuleProgress.is_completed == True).count()
+    pending_invites= db.query(models.User).filter(models.User.status == "convite_pendente").count()
+    return {
+        "total_users": total_users,
+        "pending_users": pending_users,
+        "total_paths": total_paths,
+        "total_modules": total_modules,
+        "completions": completions,
+        "pending_invites": pending_invites
+    }
+
+# ---------------- Progress Tracking ----------------
+@app.post("/modules/{module_id}/complete")
+def complete_module(
+    module_id: int,
+    score: float = Form(0.0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    progress = db.query(models.ModuleProgress).filter(
+        models.ModuleProgress.module_id == module_id,
+        models.ModuleProgress.user_id == current_user.id
+    ).first()
+    if not progress:
+        progress = models.ModuleProgress(user_id=current_user.id, module_id=module_id)
+        db.add(progress)
+    progress.is_completed = True
+    progress.score_final = score
+    progress.completed_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Módulo concluído!", "completed": True}
+
+@app.get("/paths/{path_id}/progress")
+def get_path_progress(
+    path_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
+    if not path: raise HTTPException(404, "Trilha não encontrada")
+    total_modules = 0
+    completed_modules = 0
+    for course in path.courses:
+        for module in course.modules:
+            total_modules += 1
+            progress = db.query(models.ModuleProgress).filter(
+                models.ModuleProgress.module_id == module.id,
+                models.ModuleProgress.user_id == current_user.id,
+                models.ModuleProgress.is_completed == True
+            ).first()
+            if progress: completed_modules += 1
+    pct = round((completed_modules / total_modules * 100) if total_modules > 0 else 0)
+    return {"total": total_modules, "completed": completed_modules, "percent": pct}
+
+@app.get("/courses/{course_id}/progress")
+def get_course_progress(
+    course_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    progresses = db.query(models.ModuleProgress).join(models.Module).filter(
+        models.Module.course_id == course_id,
+        models.ModuleProgress.user_id == current_user.id
+    ).all()
+    return [{"module_id": p.module_id, "completed": p.is_completed, "score": p.score_final} for p in progresses]
+
+@app.get("/my-paths")
+def get_my_paths(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    enrollments = db.query(models.Enrollment).filter(
+        models.Enrollment.user_id == current_user.id
+    ).all()
+    path_ids = [e.path_id for e in enrollments]
+    if not path_ids:
+        return []
+    paths = db.query(models.LearningPath).filter(
+        models.LearningPath.id.in_(path_ids)
+    ).all()
+    return paths
+
+@app.get("/team/progress")
+def get_team_progress(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca"]))
+):
+    if current_user.role == "admin":
+        members = db.query(models.User).filter(
+            models.User.status.in_(["ativo", "approved"])
+        ).all()
+    else:
+        members = db.query(models.User).filter(
+            models.User.team_id == current_user.team_id,
+            models.User.status.in_(["ativo", "approved"])
+        ).all()
+
+    result = []
+    for member in members:
+        total = db.query(models.ModuleProgress).filter(
+            models.ModuleProgress.user_id == member.id
+        ).count()
+        done = db.query(models.ModuleProgress).filter(
+            models.ModuleProgress.user_id == member.id,
+            models.ModuleProgress.is_completed == True
+        ).count()
+        enrollments = db.query(models.Enrollment).filter(
+            models.Enrollment.user_id == member.id
+        ).count()
+        result.append({
+            "user_id": member.id,
+            "username": member.username,
+            "email": member.email,
+            "role": member.role,
+            "enrollments": enrollments,
+            "modules_total": total,
+            "modules_done": done,
+            "percent": round((done / total * 100) if total > 0 else 0)
+        })
+    return result
+
+@app.post("/modules/{module_id}/certificate")
+def issue_certificate(
+    module_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    # Verificar se o mdulo foi concludo
+    progress = db.query(models.ModuleProgress).filter(
+        models.ModuleProgress.module_id == module_id,
+        models.ModuleProgress.user_id == current_user.id,
+        models.ModuleProgress.is_completed == True
+    ).first()
+    if not progress:
+        raise HTTPException(400, "Mdulo no concludo.")
+
+    # Verificar se j tem certificado
+    existing = db.query(models.Certificate).filter(
+        models.Certificate.module_id == module_id,
+        models.Certificate.user_id == current_user.id
+    ).first()
+    if existing:
+        return {"message": "Certificado j emitido.", "certificate_id": existing.id, "issued_at": existing.issued_at}
+
+    # Calcular data de expirao se houver validade
+    module = db.query(models.Module).filter(models.Module.id == module_id).first()
+    expires_at = None
+    if module and module.validity_months:
+        from dateutil.relativedelta import relativedelta
+        expires_at = datetime.datetime.utcnow() + relativedelta(months=module.validity_months)
+
+    cert = models.Certificate(
+        user_id=current_user.id,
+        module_id=module_id,
+        file_url="",
+        expires_at=expires_at
+    )
+    db.add(cert)
+    db.commit()
+    db.refresh(cert)
+    return {"message": "Certificado emitido!", "certificate_id": cert.id, "issued_at": cert.issued_at, "expires_at": cert.expires_at}
+
+@app.get("/my-certificates")
+def get_my_certificates(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    certs = db.query(models.Certificate).filter(
+        models.Certificate.user_id == current_user.id
+    ).all()
+    result = []
+    for c in certs:
+        module = db.query(models.Module).filter(models.Module.id == c.module_id).first()
+        result.append({
+            "certificate_id": c.id,
+            "module_id": c.module_id,
+            "module_title": module.title if module else "—",
+            "issued_at": c.issued_at,
+            "expires_at": c.expires_at,
+            "file_url": c.file_url
+        })
+    return result
+
+
 # ---------------- Admin: User Management ----------------
 @app.get("/admin/users", response_model=List[models.UserSchema])
 def list_users(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):

@@ -30,7 +30,6 @@ const App = {
     apiHeaders()     { return { 'Authorization': `Bearer ${localStorage.getItem('token')}` }; },
     apiJsonHeaders() { return { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' }; },
 
-    /* ── Status badge ── */
     statusBadge(status) {
         const map = {
             'ativo':            { label: 'Ativo',      color: '#22c55e' },
@@ -42,13 +41,14 @@ const App = {
             'cancelled':        { label: 'Cancelado',  color: '#ef4444' },
             'convite_expirado': { label: 'Expirado',   color: '#ef4444' },
             'rejected':         { label: 'Rejeitado',  color: '#ef4444' },
+            'colaborador':      { label: 'Colaborador',color: '#888'    },
+            'usuario':          { label: 'Usuário',    color: '#888'    },
         };
         const s = (status||'').toLowerCase();
         const c = map[s] || { label: status||'-', color: '#888' };
         return `<span style="padding:3px 10px;border-radius:20px;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${c.color};background:${c.color}18;border:1px solid ${c.color}35">${c.label}</span>`;
     },
 
-    /* ── Action button ── */
     actionBtn(label, onclick, variant='outline') {
         const s = {
             outline:  'background:transparent;border:1px solid var(--border);color:var(--text-dim)',
@@ -60,7 +60,6 @@ const App = {
         return `<button onclick="${onclick}" style="padding:4px 10px;border-radius:6px;font-size:0.78rem;font-family:Outfit,sans-serif;font-weight:500;cursor:pointer;white-space:nowrap;transition:opacity .15s;${s[variant]||s.outline}" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">${label}</button>`;
     },
 
-    /* ── Copy link modal ── */
     showCopyLinkModal(title, message, link) {
         const modal = document.getElementById('modal-container');
         const body  = document.getElementById('modal-body');
@@ -76,13 +75,12 @@ const App = {
         modal.classList.remove('hidden');
     },
 
-    /* ── Section header ── */
     sectionHeader({ title, backLabel, backFn, actionLabel, actionFn, breadcrumbs } = {}) {
         let bread = '';
         if (breadcrumbs && breadcrumbs.length) {
             bread = `<nav style="font-size:0.82rem;color:var(--text-dim);margin-bottom:0.6rem;display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap">` +
                 breadcrumbs.map((b,i) => i < breadcrumbs.length-1
-                    ? `<a href="#" onclick="${b.fn};return false" style="color:var(--primary-light);text-decoration:none;hover:underline">${b.label}</a><span style="color:var(--border-dark)">›</span>`
+                    ? `<a href="#" onclick="${b.fn};return false" style="color:var(--primary-light);text-decoration:none">${b.label}</a><span style="color:var(--border-dark)">›</span>`
                     : `<span style="color:var(--text-main);font-weight:500">${b.label}</span>`).join('') + `</nav>`;
         }
         const back = backFn ? `<button onclick="${backFn}" style="padding:5px 12px;border-radius:6px;font-size:0.82rem;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--text-dim);margin-right:0.75rem;font-family:Outfit,sans-serif;transition:all .2s" onmouseover="this.style.borderColor='var(--primary-light)';this.style.color='var(--primary-light)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">← ${backLabel||'Voltar'}</button>` : '';
@@ -96,6 +94,7 @@ const App = {
         const authViews = ['login','register','invite','forgot','reset'];
         if (authViews.includes(viewName)) header.classList.add('hidden');
         else header.classList.remove('hidden');
+        this._resetContainerStyles();
         if      (viewName==='login')    this.renderLogin(container);
         else if (viewName==='register') this.renderRegister(container);
         else if (viewName==='invite')   this.renderInviteAccept(container, extraParam);
@@ -124,7 +123,8 @@ const App = {
         } else {
             navHtml = `
                 <a class="nav-link" onclick="App.renderStudentDashboard()">Início</a>
-                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>`;
+                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>
+                <a class="nav-link" onclick="App.renderStudentCertificates()">🏆 Certificados</a>`;
         }
         nav.innerHTML = navHtml;
         userInfo.innerHTML = `
@@ -139,9 +139,11 @@ const App = {
         else                      this.renderStudentDashboard();
     },
 
-    /* ════════════════════════════════════════
-       AUTH — layout com fundo azul
-    ════════════════════════════════════════ */
+    _resetContainerStyles() {
+        const c = document.getElementById('app-container');
+        c.style.maxWidth=''; c.style.margin=''; c.style.padding='';
+    },
+
     _authWrap(content) {
         return `<div class="auth-wrapper">
             <div class="auth-box">
@@ -151,10 +153,11 @@ const App = {
         </div>`;
     },
 
+    /* ════════════════════════════════════════
+       AUTH
+    ════════════════════════════════════════ */
     renderLogin(container) {
-        container.style.maxWidth = '100%';
-        container.style.margin   = '0';
-        container.style.padding  = '0';
+        container.style.maxWidth='100%'; container.style.margin='0'; container.style.padding='0';
         container.innerHTML = this._authWrap(`
             <h2 style="margin-bottom:1.5rem;font-weight:700;font-size:1.35rem;color:var(--primary)">Acesso à GeoTrilha</h2>
             <form id="login-form">
@@ -164,25 +167,19 @@ const App = {
                     <input type="password" id="l-pass" class="form-control" placeholder="••••••••" required>
                     <div style="text-align:right;margin-top:0.35rem"><a href="#" onclick="App.showView('forgot')" style="font-size:0.82rem;color:var(--primary-light)">Esqueci minha senha</a></div>
                 </div>
-                <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.25rem;padding:0.75rem">Entrar →</button>
+                <button type="submit" class="btn btn-primary" style="width:100%;padding:0.75rem">Entrar →</button>
             </form>
             <div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border);font-size:0.85rem;color:var(--text-dim);text-align:center">
                 Novo colaborador? <a href="#" onclick="App.showView('register')" style="color:var(--primary-light);font-weight:600">Solicitar acesso</a>
             </div>`);
-        // reset container styles after auth
         document.getElementById('login-form').onsubmit = async (e) => {
             e.preventDefault();
-            const btn = e.target.querySelector('button'); btn.disabled=true; btn.textContent='Entrando...';
-            const res = await fetch('/login', { method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({ username: document.getElementById('l-user').value, password: document.getElementById('l-pass').value }) });
-            const data = await res.json();
-            if (res.ok && data.access_token) {
-                container.style.maxWidth = '';
-                container.style.margin   = '';
-                container.style.padding  = '';
-                localStorage.setItem('token', data.access_token); this.init();
-            }
-            else { alert(data.detail||'Usuário ou senha inválidos.'); btn.disabled=false; btn.textContent='Entrar →'; }
+            const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Entrando...';
+            const res=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({username:document.getElementById('l-user').value,password:document.getElementById('l-pass').value})});
+            const data=await res.json();
+            if(res.ok&&data.access_token){localStorage.setItem('token',data.access_token);this._resetContainerStyles();this.init();}
+            else{alert(data.detail||'Usuário ou senha inválidos.');btn.disabled=false;btn.textContent='Entrar →';}
         };
     },
 
@@ -213,7 +210,7 @@ const App = {
             e.preventDefault();
             const pass=document.getElementById('r-pass').value, pass2=document.getElementById('r-pass2').value;
             const err=document.getElementById('reset-err');
-            if (pass!==pass2) { err.textContent='As senhas não coincidem.'; err.style.display='block'; return; }
+            if(pass!==pass2){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Salvando...';
             const fd=new FormData(); fd.append('token',document.getElementById('reset-token').value); fd.append('password',pass);
             const res=await fetch('/auth/reset-password',{method:'POST',body:fd});
@@ -267,17 +264,9 @@ const App = {
         };
     },
 
-    _resetContainerStyles() {
-        const c = document.getElementById('app-container');
-        c.style.maxWidth=''; c.style.margin=''; c.style.padding='';
-    },
-
     showForcePasswordChangeModal() {
-        this._resetContainerStyles();
-        const modal=document.getElementById('modal-container');
-        const body =document.getElementById('modal-body');
-        modal.classList.remove('hidden');
-        body.className='';
+        const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
+        modal.classList.remove('hidden'); body.className='';
         const closeBtn=modal.querySelector('.modal-close');
         if(closeBtn) closeBtn.style.display='none';
         modal.onclick=(e)=>{if(e.target===modal)e.stopPropagation();};
@@ -311,63 +300,73 @@ const App = {
     logoutPending() { alert('Seu cadastro está pendente ou foi rejeitado.'); this.logout(); },
 
     /* ════════════════════════════════════════
-       ADMIN — DASHBOARD
+       ADMIN — DASHBOARD (métricas reais)
     ════════════════════════════════════════ */
     async renderAdminDashboard() {
         this._resetContainerStyles();
-        const container = document.getElementById('app-container');
-        container.innerHTML = this.sectionHeader({ title:'Dashboard' }) +
-            `<div class="grid-stats" id="stats-grid">
-                <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="stat-users">—</div><div class="stat-label">Usuários Ativos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="stat-paths">—</div><div class="stat-label">Trilhas</div></div></div>
-                <div class="stat-card"><div class="stat-icon">🎓</div><div class="stat-info"><div class="stat-value" id="stat-completions">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="stat-pending">—</div><div class="stat-label">Aprovações Pendentes</div></div></div>
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:'Dashboard'})+`
+            <div class="grid-stats" id="stats-grid">
+                <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="s-users">—</div><div class="stat-label">Usuários Ativos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="s-paths">—</div><div class="stat-label">Trilhas</div></div></div>
+                <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="s-modules">—</div><div class="stat-label">Módulos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="s-completions">—</div><div class="stat-label">Conclusões</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="s-pending">—</div><div class="stat-label">Aprovações Pendentes</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📬</div><div class="stat-info"><div class="stat-value" id="s-invites">—</div><div class="stat-label">Convites Pendentes</div></div></div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:0.5rem">
                 <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Últimos Usuários</h3>
+                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Últimos Usuários Cadastrados</h3>
                     <div id="recent-users"><div class="loader">Carregando</div></div>
                 </div>
                 <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Convites Pendentes</h3>
+                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Convites Aguardando Ativação</h3>
                     <div id="pending-invites"><div class="loader">Carregando</div></div>
                 </div>
             </div>`;
-        // Carregar dados
-        const [usersRes, pathsRes] = await Promise.all([
-            fetch('/admin/users', { headers: this.apiHeaders() }),
-            fetch('/paths',       { headers: this.apiHeaders() })
-        ]);
-        const users = await usersRes.json();
-        const paths = await pathsRes.json();
-        const ativos   = users.filter(u => u.status==='ativo'||u.status==='approved').length;
-        const pendentes = users.filter(u => u.status==='pending').length;
-        document.getElementById('stat-users').textContent     = ativos;
-        document.getElementById('stat-paths').textContent     = paths.length;
-        document.getElementById('stat-pending').textContent   = pendentes;
-        document.getElementById('stat-completions').textContent = '—';
-        // Últimos usuários
-        const recentEl = document.getElementById('recent-users');
-        const recent = [...users].reverse().slice(0,5);
-        recentEl.innerHTML = recent.length ? recent.map(u => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border)">
-                <div>
-                    <div style="font-weight:600;font-size:0.88rem">${u.username}</div>
-                    <div style="font-size:0.78rem;color:var(--text-dim)">${u.email}</div>
-                </div>
-                ${this.statusBadge(u.status)}
-            </div>`).join('') : '<p style="color:var(--text-dim);font-size:0.88rem">Nenhum usuário.</p>';
-        // Convites pendentes
-        const invEl = document.getElementById('pending-invites');
-        const convites = users.filter(u => u.status==='convite_pendente'||u.status==='invited');
-        invEl.innerHTML = convites.length ? convites.slice(0,5).map(u => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border)">
-                <div style="font-size:0.88rem">
-                    <div style="font-weight:600">${u.username}</div>
-                    <div style="color:var(--text-dim);font-size:0.78rem">${u.email}</div>
-                </div>
-                ${this.actionBtn('Reenviar',`App.adminAction(${u.id},'resend_invite')`)}
-            </div>`).join('') : '<p style="color:var(--text-dim);font-size:0.88rem">Nenhum convite pendente.</p>';
+
+        // Buscar métricas reais do novo endpoint
+        try {
+            const [statsRes, usersRes] = await Promise.all([
+                fetch('/dashboard/stats', {headers:this.apiHeaders()}),
+                fetch('/admin/users',     {headers:this.apiHeaders()})
+            ]);
+            const stats = await statsRes.json();
+            const users = await usersRes.json();
+
+            document.getElementById('s-users').textContent      = stats.total_users      ?? '—';
+            document.getElementById('s-paths').textContent      = stats.total_paths      ?? '—';
+            document.getElementById('s-modules').textContent    = stats.total_modules    ?? '—';
+            document.getElementById('s-completions').textContent= stats.completions      ?? '0';
+            document.getElementById('s-pending').textContent    = stats.pending_users    ?? '0';
+            document.getElementById('s-invites').textContent    = stats.pending_invites  ?? '0';
+
+            // Últimos usuários
+            const recentEl=document.getElementById('recent-users');
+            const recent=[...users].reverse().slice(0,6);
+            recentEl.innerHTML=recent.length?recent.map(u=>`
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border)">
+                    <div>
+                        <div style="font-weight:600;font-size:0.88rem">${u.username}</div>
+                        <div style="font-size:0.75rem;color:var(--text-dim)">${u.email}</div>
+                    </div>
+                    ${this.statusBadge(u.status)}
+                </div>`).join(''):'<p style="color:var(--text-dim);font-size:0.88rem">Nenhum usuário.</p>';
+
+            // Convites pendentes
+            const invEl=document.getElementById('pending-invites');
+            const convites=users.filter(u=>u.status==='convite_pendente'||u.status==='invited');
+            invEl.innerHTML=convites.length?convites.slice(0,6).map(u=>`
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border)">
+                    <div style="min-width:0;flex:1">
+                        <div style="font-weight:600;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${u.username}</div>
+                        <div style="font-size:0.75rem;color:var(--text-dim)">${u.email}</div>
+                    </div>
+                    ${this.actionBtn('Reenviar',`App.adminAction(${u.id},'resend_invite')`)}
+                </div>`).join(''):'<p style="color:var(--text-dim);font-size:0.88rem">Nenhum convite pendente. ✓</p>';
+        } catch(e) {
+            console.error('Erro ao carregar dashboard:', e);
+        }
     },
 
     /* ════════════════════════════════════════
@@ -375,30 +374,30 @@ const App = {
     ════════════════════════════════════════ */
     async renderAdminUsers() {
         this._resetContainerStyles();
-        const container = document.getElementById('app-container');
-        container.innerHTML = this.sectionHeader({ title:'Gestão de Usuários', actionLabel:'+ Convidar Usuário', actionFn:'App.showInviteUserModal()' }) + `
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:'Gestão de Usuários',actionLabel:'+ Convidar Usuário',actionFn:'App.showInviteUserModal()'})+`
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="u-table">
                     <thead><tr><th>Usuário</th><th>E-mail</th><th>Depto</th><th>Cargo</th><th>Status</th><th>Ações</th></tr></thead>
                     <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
-        const res = await fetch('/admin/users', { headers: this.apiHeaders() });
-        const users = await res.json();
-        const tbody = document.querySelector('#u-table tbody'); tbody.innerHTML='';
-        if (!users.length) { tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum usuário.</p></div></td></tr>'; return; }
-        users.forEach(u => {
-            tbody.innerHTML += `<tr>
+        const res=await fetch('/admin/users',{headers:this.apiHeaders()});
+        const users=await res.json();
+        const tbody=document.querySelector('#u-table tbody'); tbody.innerHTML='';
+        if(!users.length){tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum usuário.</p></div></td></tr>';return;}
+        users.forEach(u=>{
+            tbody.innerHTML+=`<tr>
                 <td><strong>${u.username}</strong></td>
                 <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
                 <td style="font-size:0.82rem;color:var(--text-dim)">${u.department||'—'}</td>
                 <td style="font-size:0.82rem">${u.role}</td>
                 <td>${this.statusBadge(u.status)}</td>
                 <td><div style="display:flex;gap:4px;flex-wrap:wrap;padding:4px 0">
-                    ${u.status==='pending'?this.actionBtn('✓',`App.changeUserStatus(${u.id},'approved')`,'success'):''}
-                    ${u.status==='pending'?this.actionBtn('✕',`App.changeUserStatus(${u.id},'rejected')`,'danger'):''}
+                    ${u.status==='pending'?this.actionBtn('✓ Aprovar',`App.changeUserStatus(${u.id},'approved')`,'success'):''}
+                    ${u.status==='pending'?this.actionBtn('✕ Rejeitar',`App.changeUserStatus(${u.id},'rejected')`,'danger'):''}
                     ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0})`)}
-                    ${this.actionBtn('🔑',`App.triggerPasswordReset(${u.id},'${u.username}')`)}
+                    ${this.actionBtn('🔑 Resetar',`App.triggerPasswordReset(${u.id},'${u.username}')`)}
                     ${this.user.id!==u.id?this.actionBtn('🗑',`App.deleteUser(${u.id},'${u.username}')`,'danger'):''}
                 </div></td>
             </tr>`;
@@ -437,7 +436,7 @@ const App = {
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
                 </div>
             </form>`;
-        document.getElementById('invite-user-form').onsubmit = async (e) => {
+        document.getElementById('invite-user-form').onsubmit=async(e)=>{
             e.preventDefault();
             const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Gerando...';
             const fd=new FormData();
@@ -477,7 +476,7 @@ const App = {
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
                 </div>
             </form>`;
-        document.getElementById('role-form').onsubmit = async (e) => {
+        document.getElementById('role-form').onsubmit=async(e)=>{
             e.preventDefault();
             const fd=new FormData(); fd.append('role',document.getElementById('e-role').value);
             const res=await fetch(`/admin/users/${id}/role`,{method:'POST',headers:this.apiHeaders(),body:fd});
@@ -495,7 +494,7 @@ const App = {
     },
 
     async triggerPasswordReset(id, username) {
-        if(!confirm(`Resetar a senha de "${username}" para a senha padrão?\nO usuário deverá criar uma nova no próximo login.`)) return;
+        if(!confirm(`Resetar a senha de "${username}" para a senha padrão?`)) return;
         const res=await fetch(`/admin/users/${id}/reset-password`,{method:'POST',headers:this.apiHeaders()});
         const data=await res.json();
         if(res.ok) this.showCopyLinkModal('Senha Resetada ✓',`Envie este link para ${username}:`,data.reset_link);
@@ -614,7 +613,7 @@ const App = {
     },
 
     /* ════════════════════════════════════════
-       ADMIN — TRILHAS
+       ADMIN — TRILHAS / CURSOS / MÓDULOS
     ════════════════════════════════════════ */
     async renderAdminPaths() {
         this._resetContainerStyles(); this.currentPath=null; this.currentCourse=null;
@@ -673,9 +672,6 @@ const App = {
         this.renderAdminPaths();
     },
 
-    /* ════════════════════════════════════════
-       ADMIN — CURSOS
-    ════════════════════════════════════════ */
     async renderAdminCourses(pathId, pathTitle) {
         this._resetContainerStyles(); this.currentPath={id:pathId,title:pathTitle}; this.currentCourse=null;
         const container=document.getElementById('app-container');
@@ -729,14 +725,11 @@ const App = {
     showCreateCourseModal(pathId)           { this._courseModal(null,'','',1,pathId,false); },
     showEditCourseModal(id,title,desc,order){ this._courseModal(id,title,desc,order,null,true); },
     async deleteCourse(id, title, pathId) {
-        if(!confirm(`Excluir o curso "${title}"?\nTodos os módulos serão removidos.`)) return;
+        if(!confirm(`Excluir o curso "${title}"?`)) return;
         await fetch(`/courses/${id}`,{method:'DELETE',headers:this.apiHeaders()});
         this.renderAdminCourses(pathId,this.currentPath.title);
     },
 
-    /* ════════════════════════════════════════
-       ADMIN — MÓDULOS
-    ════════════════════════════════════════ */
     async renderAdminModules(courseId, courseTitle) {
         this._resetContainerStyles(); this.currentCourse={id:courseId,title:courseTitle};
         const container=document.getElementById('app-container');
@@ -782,7 +775,7 @@ const App = {
             wrapper.innerHTML+=`<div class="card" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
                 <div style="flex:1;min-width:0">
                     <span style="font-size:0.7rem;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:0.07em">Módulo ${m.order||'—'}</span>
-                    <h4 style="margin:0.15rem 0 0;font-size:0.95rem;color:var(--text-main)">${m.title}</h4>
+                    <h4 style="margin:0.15rem 0 0;font-size:0.95rem">${m.title}</h4>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
                     ${this.actionBtn('✏️',`App.showEditModuleModal(${m.id},'${m.title.replace(/'/g,"\\'")}','${(m.description||'').replace(/'/g,"\\'")}',${m.order||1},${m.validity_months||0})`)}
@@ -824,7 +817,7 @@ const App = {
     },
 
     async deleteModule(id, title, courseId) {
-        if(!confirm(`Excluir o módulo "${title}"?\nO vídeo e os progressos dos alunos serão removidos.`)) return;
+        if(!confirm(`Excluir o módulo "${title}"?`)) return;
         await fetch(`/modules/${id}`,{method:'DELETE',headers:this.apiHeaders()});
         this.renderAdminModules(courseId,this.currentCourse.title);
     },
@@ -849,7 +842,7 @@ const App = {
             try{
                 const initRes=await fetch('/modules/upload/init?filename='+encodeURIComponent(file.name),{method:'POST',headers:this.apiHeaders()});
                 const{upload_id}=await initRes.json();
-                const chunkSize=5*1024*1024,totalChunks=Math.ceil(file.size/chunkSize);
+                const chunkSize=5*1024*1024, totalChunks=Math.ceil(file.size/chunkSize);
                 for(let i=0;i<totalChunks;i++){
                     const chunk=file.slice(i*chunkSize,Math.min((i+1)*chunkSize,file.size));
                     const fd=new FormData(); fd.append('upload_id',upload_id); fd.append('filename',file.name); fd.append('chunk_index',i); fd.append('chunk',chunk);
@@ -918,24 +911,63 @@ const App = {
     async renderLeaderDashboard() {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({title:'Minha Equipe',actionLabel:'+ Adicionar Colaborador',actionFn:'App.showAddMemberModal()'})+`
+        container.innerHTML=this.sectionHeader({title:'Minha Equipe',actionLabel:'+ Convidar Colaborador',actionFn:'App.showInviteUserModal()'})+`
+            <!-- Stats da equipe -->
+            <div class="grid-stats" id="team-stats" style="margin-bottom:1.5rem">
+                <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="ts-members">—</div><div class="stat-label">Membros Ativos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-done">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📊</div><div class="stat-info"><div class="stat-value" id="ts-pct">—</div><div class="stat-label">Progresso Médio</div></div></div>
+            </div>
+            <!-- Tabela de progresso -->
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="team-table">
-                    <thead><tr><th>Nome</th><th>E-mail</th><th>Status</th><th>Ações</th></tr></thead>
-                    <tbody><tr><td colspan="4" class="loader">Carregando</td></tr></tbody>
+                    <thead><tr><th>Colaborador</th><th>E-mail</th><th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
-        const res=await fetch('/admin/users',{headers:this.apiHeaders()}); const users=await res.json();
-        const tbody=document.querySelector('#team-table tbody'); tbody.innerHTML='';
-        if(!users.length){tbody.innerHTML='<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador encontrado.</p></div></td></tr>';return;}
-        users.forEach(u=>{
-            tbody.innerHTML+=`<tr>
-                <td><strong>${u.username}</strong></td>
-                <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
-                <td>${this.statusBadge(u.status)}</td>
-                <td>${this.actionBtn('🎯 Atribuir Trilha',`App.showAssignPathModal(${u.id},'${u.username}')`)}</td>
-            </tr>`;
-        });
+
+        try {
+            const res=await fetch('/team/progress',{headers:this.apiHeaders()});
+            const members=await res.json();
+            const tbody=document.querySelector('#team-table tbody'); tbody.innerHTML='';
+
+            if(!members.length){
+                tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>';
+                document.getElementById('ts-members').textContent='0';
+                document.getElementById('ts-done').textContent='0';
+                document.getElementById('ts-pct').textContent='0%';
+                return;
+            }
+
+            // Stats
+            const totalDone=members.reduce((s,m)=>s+m.modules_done,0);
+            const avgPct=Math.round(members.reduce((s,m)=>s+m.percent,0)/members.length);
+            document.getElementById('ts-members').textContent=members.length;
+            document.getElementById('ts-done').textContent=totalDone;
+            document.getElementById('ts-pct').textContent=avgPct+'%';
+
+            members.forEach(u=>{
+                const pct=u.percent||0;
+                const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                tbody.innerHTML+=`<tr>
+                    <td><strong>${u.username}</strong></td>
+                    <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
+                    <td style="font-size:0.82rem">${u.role}</td>
+                    <td style="font-size:0.82rem">${u.modules_done}/${u.modules_total}</td>
+                    <td style="min-width:120px">
+                        <div style="display:flex;align-items:center;gap:0.5rem">
+                            <div class="progress-track" style="flex:1;height:6px">
+                                <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
+                            </div>
+                            <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:30px">${pct}%</span>
+                        </div>
+                    </td>
+                    <td>${this.actionBtn('🎯 Atribuir Trilha',`App.showAssignPathModal(${u.user_id},'${u.username}')`)}</td>
+                </tr>`;
+            });
+        } catch(e) {
+            console.error('Erro ao carregar equipe:', e);
+        }
     },
 
     showAddMemberModal() {
@@ -986,44 +1018,74 @@ const App = {
     },
 
     /* ════════════════════════════════════════
-       ALUNO — DASHBOARD
+       ALUNO — DASHBOARD com progresso real
     ════════════════════════════════════════ */
     async renderStudentDashboard() {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({title:`Olá, ${this.user.username}! 👋`})+
-            `<div class="grid-stats">
-                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="sd-paths">—</div><div class="stat-label">Trilhas Disponíveis</div></div></div>
-                <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="sd-modules">—</div><div class="stat-label">Módulos no Total</div></div></div>
+        container.innerHTML=this.sectionHeader({title:`Olá, ${this.user.username}! 👋`})+`
+            <div class="grid-stats">
+                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="sd-paths">—</div><div class="stat-label">Trilhas Matriculadas</div></div></div>
+                <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="sd-modules">—</div><div class="stat-label">Total de Módulos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="sd-done">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">🏆</div><div class="stat-info"><div class="stat-value" id="sd-certs">—</div><div class="stat-label">Certificados</div></div></div>
             </div>
             <h3 style="margin-bottom:1rem;color:var(--primary);font-size:1.1rem">Minhas Trilhas</h3>
             <div class="grid" id="dash-paths"><div class="loader">Carregando</div></div>`;
-        const res=await fetch('/paths',{headers:this.apiHeaders()}); const paths=await res.json();
+
+        // Usa /my-paths — só trilhas matriculadas
+        const [pathsRes, certsRes] = await Promise.all([
+            fetch('/my-paths', {headers:this.apiHeaders()}),
+            fetch('/my-certificates', {headers:this.apiHeaders()})
+        ]);
+        const paths = pathsRes.ok ? await pathsRes.json() : [];
+        const certs = certsRes.ok ? await certsRes.json() : [];
+
         document.getElementById('sd-paths').textContent=paths.length;
-        let totalModules=0;
+        document.getElementById('sd-certs').textContent=certs.length;
+
+        let totalModules=0, totalDone=0;
         const grid=document.getElementById('dash-paths'); grid.innerHTML='';
-        if(!paths.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">📚</div><p>Nenhuma trilha disponível ainda.</p></div>';return;}
+
+        if(!paths.length){
+            grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1">
+                <div class="empty-icon">📚</div>
+                <p>Você ainda não está matriculado em nenhuma trilha.</p>
+                <p style="font-size:0.85rem;margin-top:0.5rem">Entre em contato com seu líder ou administrador.</p>
+            </div>`;
+            document.getElementById('sd-modules').textContent='0';
+            document.getElementById('sd-done').textContent='0';
+            return;
+        }
+
         for(const p of paths){
-            const cRes=await fetch(`/paths/${p.id}/courses`,{headers:this.apiHeaders()});
-            const courses=await cRes.json();
-            let modCount=0; for(const c of courses){modCount+=(c.modules||[]).length;}
-            totalModules+=modCount;
+            let progData={total:0,completed:0,percent:0};
+            try{
+                const pRes=await fetch(`/paths/${p.id}/progress`,{headers:this.apiHeaders()});
+                if(pRes.ok) progData=await pRes.json();
+            }catch(e){}
+            totalModules+=progData.total;
+            totalDone+=progData.completed;
+            const pct=progData.percent||0;
+            const fillColor=pct===100?'#22c55e':'var(--primary-light)';
             grid.innerHTML+=`<div class="path-card">
                 <div class="path-icon">📚</div>
                 <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${p.title}</h3>
                 <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1rem;line-height:1.5">${p.description||''}</p>
                 <div style="margin-bottom:0.75rem">
                     <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--text-dim);margin-bottom:0.3rem">
-                        <span>${courses.length} curso${courses.length!==1?'s':''} · ${modCount} módulo${modCount!==1?'s':''}</span>
+                        <span>${progData.completed} de ${progData.total} módulos</span>
+                        <span style="font-weight:700;color:${fillColor}">${pct}%</span>
                     </div>
-                    <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
+                    <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
                 </div>
-                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')">Continuar →</button>
+                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')">
+                    ${pct===100?'✓ Concluída — Revisar':'Continuar →'}
+                </button>
             </div>`;
         }
         document.getElementById('sd-modules').textContent=totalModules;
-        document.getElementById('sd-done').textContent='0';
+        document.getElementById('sd-done').textContent=totalDone;
     },
 
     /* ════════════════════════════════════════
@@ -1032,19 +1094,39 @@ const App = {
     async renderStudentPaths() {
         this._resetContainerStyles(); this.currentPath=null; this.currentCourse=null;
         const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({title:'Minhas Trilhas'})+
+        container.innerHTML=this.sectionHeader({title:'Minhas Trilhas',backLabel:'Início',backFn:'App.renderStudentDashboard()'})+
             `<div class="grid" id="student-paths"><div class="loader">Carregando</div></div>`;
-        const res=await fetch('/paths',{headers:this.apiHeaders()}); const paths=await res.json();
+        // Usa /my-paths — só trilhas matriculadas
+        const res=await fetch('/my-paths',{headers:this.apiHeaders()});
+        const paths=res.ok?await res.json():[];
         const grid=document.getElementById('student-paths'); grid.innerHTML='';
-        if(!paths.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">📚</div><p>Nenhuma trilha disponível.</p></div>';return;}
-        paths.forEach(p=>{
+        if(!paths.length){
+            grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1">
+                <div class="empty-icon">📚</div>
+                <p>Você não está matriculado em nenhuma trilha.</p>
+                <p style="font-size:0.85rem;margin-top:0.5rem">Entre em contato com seu líder ou administrador.</p>
+            </div>`;
+            return;
+        }
+        for(const p of paths){
+            let pct=0;
+            try{const pr=await fetch(`/paths/${p.id}/progress`,{headers:this.apiHeaders()});if(pr.ok){const d=await pr.json();pct=d.percent||0;}}catch(e){}
+            const fillColor=pct===100?'#22c55e':'var(--primary-light)';
             grid.innerHTML+=`<div class="path-card">
                 <div class="path-icon">📚</div>
                 <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${p.title}</h3>
-                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1.25rem;line-height:1.5">${p.description||''}</p>
-                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')">Acessar →</button>
+                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 0.75rem;line-height:1.5">${p.description||''}</p>
+                <div style="margin-bottom:0.75rem">
+                    <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-dim);margin-bottom:0.3rem">
+                        <span>Progresso</span><span style="font-weight:700;color:${fillColor}">${pct}%</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+                </div>
+                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')">
+                    ${pct===100?'✓ Concluída':'Acessar →'}
+                </button>
             </div>`;
-        });
+        }
     },
 
     async showStudentCourses(pathId, pathTitle) {
@@ -1053,19 +1135,33 @@ const App = {
         container.innerHTML=this.sectionHeader({
             title:pathTitle,
             backLabel:'Trilhas',backFn:'App.renderStudentPaths()',
-            breadcrumbs:[{label:'Trilhas',fn:'App.renderStudentPaths()'},{label:pathTitle}]
+            breadcrumbs:[{label:'Início',fn:'App.renderStudentDashboard()'},{label:'Trilhas',fn:'App.renderStudentPaths()'},{label:pathTitle}]
         })+`<div class="grid" id="student-courses"><div class="loader">Carregando</div></div>`;
         const res=await fetch(`/paths/${pathId}/courses`,{headers:this.apiHeaders()}); const courses=await res.json();
         const grid=document.getElementById('student-courses'); grid.innerHTML='';
         if(!courses.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso disponível.</p></div>';return;}
-        courses.forEach(c=>{
+        // Buscar progresso de cada curso
+        for(const c of courses){
+            let done=0, total=(c.modules||[]).length;
+            try{
+                const pr=await fetch(`/courses/${c.id}/progress`,{headers:this.apiHeaders()});
+                if(pr.ok){const d=await pr.json();done=d.filter(x=>x.completed).length;}
+            }catch(e){}
+            const pct=total>0?Math.round((done/total)*100):0;
+            const fillColor=pct===100?'#22c55e':'var(--primary-light)';
             grid.innerHTML+=`<div class="path-card">
                 <div class="path-icon" style="background:linear-gradient(135deg,#1e40af,#3b82f6)">🎓</div>
                 <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.order?c.order+'. ':''}${c.title}</h3>
-                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1.25rem;line-height:1.5">${c.description||''}</p>
+                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 0.75rem;line-height:1.5">${c.description||''}</p>
+                <div style="margin-bottom:0.75rem">
+                    <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-dim);margin-bottom:0.3rem">
+                        <span>${done} de ${total} módulos</span><span style="font-weight:700;color:${fillColor}">${pct}%</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+                </div>
                 <button class="btn btn-primary" style="width:100%" onclick="App.showStudentModules(${c.id},'${c.title.replace(/'/g,"\\'")}')">Ver módulos →</button>
             </div>`;
-        });
+        }
     },
 
     async showStudentModules(courseId, courseTitle) {
@@ -1075,31 +1171,47 @@ const App = {
             title:courseTitle,
             backLabel:this.currentPath.title,backFn:`App.showStudentCourses(${this.currentPath.id},'${this.currentPath.title.replace(/'/g,"\\'")}')`,
             breadcrumbs:[
+                {label:'Início',fn:'App.renderStudentDashboard()'},
                 {label:'Trilhas',fn:'App.renderStudentPaths()'},
                 {label:this.currentPath.title,fn:`App.showStudentCourses(${this.currentPath.id},'${this.currentPath.title.replace(/'/g,"\\'")}')` },
                 {label:courseTitle}
             ]
         })+`<div id="student-modules"><div class="loader">Carregando</div></div>`;
-        const res=await fetch(`/courses/${courseId}/modules`,{headers:this.apiHeaders()}); const modules=await res.json();
+        const [modulesRes, progressRes] = await Promise.all([
+            fetch(`/courses/${courseId}/modules`,  {headers:this.apiHeaders()}),
+            fetch(`/courses/${courseId}/progress`, {headers:this.apiHeaders()})
+        ]);
+        const modules  = await modulesRes.json();
+        const progress = progressRes.ok ? await progressRes.json() : [];
+        const doneIds  = new Set(progress.filter(p=>p.completed).map(p=>p.module_id));
+
         const grid=document.getElementById('student-modules'); grid.innerHTML='';
         if(!modules.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">🎬</div><p>Nenhum módulo disponível.</p></div>';return;}
+
         modules.forEach(m=>{
-            grid.innerHTML+=`<div class="module-card" onclick="App.playModule(${m.id},${courseId})">
-                <div class="module-play-icon">
-                    <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            const isDone=doneIds.has(m.id);
+            grid.innerHTML+=`<div class="module-card" onclick="App.playModule(${m.id},${courseId},${isDone})">
+                <div class="module-play-icon" style="${isDone?'background:linear-gradient(135deg,#16a34a,#22c55e)':''}">
+                    ${isDone
+                        ? `<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`
+                        : `<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:white;margin-left:2px"><path d="M8 5v14l11-7z"/></svg>`
+                    }
                 </div>
                 <div class="module-info">
-                    <h4>${m.title}</h4>
-                    <p>Módulo ${m.order||''} ${m.description?'· '+m.description.substring(0,60)+(m.description.length>60?'...':''):''}</p>
+                    <h4 style="${isDone?'color:var(--text-dim);text-decoration:line-through':''}">${m.title}</h4>
+                    <p>Módulo ${m.order||''} ${isDone?'· <span style="color:#22c55e;font-weight:600">Concluído ✓</span>':''}</p>
                 </div>
                 <div class="module-status">
-                    <span style="font-size:0.75rem;color:var(--text-light)">▶</span>
+                    ${isDone
+                        ? `<span style="font-size:1.1rem">✅</span>`
+                        : `<span style="font-size:0.75rem;color:var(--text-light)">▶</span>`
+                    }
                 </div>
             </div>`;
         });
     },
 
-    async playModule(moduleId, courseId) {
+    async playModule(moduleId, courseId, alreadyDone=false) {
         const res=await fetch(`/courses/${courseId}/modules`,{headers:this.apiHeaders()}); const modules=await res.json();
         const target=modules.find(m=>m.id===moduleId);
         if(!target) return alert('Módulo não encontrado.');
@@ -1111,7 +1223,7 @@ const App = {
         body.innerHTML=`
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
                 <h3 style="margin:0;font-size:1rem;color:white;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:88%">${target.title}</h3>
-                <button onclick="App.closeModal()" style="background:rgba(255,255,255,.12);border:none;cursor:pointer;width:30px;height:30px;border-radius:50%;color:white;font-size:1.1rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.2)'" onmouseout="this.style.background='rgba(255,255,255,.12)'">×</button>
+                <button onclick="App.closeModal()" style="background:rgba(255,255,255,.12);border:none;cursor:pointer;width:30px;height:30px;border-radius:50%;color:white;font-size:1.1rem;display:flex;align-items:center;justify-content:center;flex-shrink:0" onmouseover="this.style.background='rgba(255,255,255,.22)'" onmouseout="this.style.background='rgba(255,255,255,.12)'">×</button>
             </div>
             <div style="position:relative;background:#000;border-radius:10px;overflow:hidden">
                 <video id="st-video" src="${target.video_url}" controls autoplay style="width:100%;display:block;max-height:68vh"></video>
@@ -1127,17 +1239,35 @@ const App = {
                 <h4 style="margin-bottom:0.4rem;color:white">🎉 Vídeo concluído!</h4>
                 <p style="color:rgba(255,255,255,.6);font-size:0.88rem;margin-bottom:1rem">Responda à prova final para completar este módulo.</p>
                 <button class="btn btn-primary" id="btn-final-exam">Iniciar Prova Final</button>
-            </div>`;
+            </div>
+            ${alreadyDone&&!finalQuizzes.length?'<div style="margin-top:1rem;text-align:center;padding:0.75rem;background:rgba(34,197,94,.15);border-radius:8px;color:#86efac;font-size:0.88rem">✓ Módulo já concluído — você está revisando o conteúdo</div>':''}`;
+
         const video=document.getElementById('st-video'), asked=new Set();
         video.ontimeupdate=()=>{
             if(video.paused) return;
             inlineQuizzes.forEach(q=>{
                 if(Math.abs(video.currentTime-q.timestamp)<0.5&&!asked.has(q.id)){asked.add(q.id);video.pause();video.controls=false;this.showQuizOverlay(q);}
             });
-            if(video.duration>0&&video.currentTime>=video.duration-1&&finalQuizzes.length>0)
-                document.getElementById('final-exam-section').style.display='block';
+            // Marcar como concluído ao chegar no fim (sem prova final)
+            if(video.duration>0&&video.currentTime>=video.duration-1){
+                if(finalQuizzes.length>0){
+                    document.getElementById('final-exam-section').style.display='block';
+                } else if(!alreadyDone){
+                    this.markModuleComplete(moduleId, 100);
+                }
+            }
         };
-        if(finalQuizzes.length>0) document.getElementById('btn-final-exam').onclick=()=>this.startFinalExam(finalQuizzes);
+        if(finalQuizzes.length>0) document.getElementById('btn-final-exam').onclick=()=>this.startFinalExam(finalQuizzes, moduleId);
+    },
+
+    // NOVO: Registrar conclusão do módulo
+    async markModuleComplete(moduleId, score) {
+        try{
+            const fd=new FormData(); fd.append('score', score);
+            await fetch(`/modules/${moduleId}/complete`,{method:'POST',headers:this.apiHeaders(),body:fd});
+            // Emitir certificado automaticamente
+            await fetch(`/modules/${moduleId}/certificate`,{method:'POST',headers:this.apiHeaders()});
+        }catch(e){ console.error('Erro ao registrar progresso:', e); }
     },
 
     showQuizOverlay(q) {
@@ -1158,7 +1288,8 @@ const App = {
         });
     },
 
-    startFinalExam(questions) {
+    // ATUALIZADO: recebe moduleId para registrar conclusão
+    startFinalExam(questions, moduleId) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
         let current=0, correct=0;
@@ -1170,7 +1301,7 @@ const App = {
                     <span style="font-size:0.8rem;color:var(--text-dim);background:var(--bg-main);padding:4px 12px;border-radius:20px">${current+1} / ${questions.length}</span>
                 </div>
                 <div style="background:var(--bg-main);border-radius:10px;padding:1.25rem;margin-bottom:1.25rem;border-left:4px solid var(--primary-light)">
-                    <p style="font-weight:600;margin:0;line-height:1.55;color:var(--text-main)">${q.text}</p>
+                    <p style="font-weight:600;margin:0;line-height:1.55">${q.text}</p>
                 </div>
                 <div id="exam-opts" style="display:flex;flex-direction:column;gap:0.5rem"></div>`;
             const opts=document.getElementById('exam-opts');
@@ -1191,17 +1322,58 @@ const App = {
         };
         const showResult=()=>{
             const score=Math.round((correct/questions.length)*100), passed=score>=80;
+            // Registrar conclusão se aprovado
+            if(passed && moduleId) this.markModuleComplete(moduleId, score);
             body.innerHTML=`<div style="text-align:center;padding:1.5rem 0">
                 <div style="font-size:3.5rem;margin-bottom:0.75rem">${passed?'🎉':'📚'}</div>
                 <h2 style="margin-bottom:0.25rem;color:${passed?'#16a34a':'#f59e0b'}">${passed?'Aprovado!':'Tente novamente'}</h2>
                 <p style="font-size:2.5rem;font-weight:800;color:${passed?'#22c55e':'#f59e0b'};margin:0.5rem 0;line-height:1">${score}%</p>
                 <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1.5rem">${correct} de ${questions.length} corretas — mínimo 80%</p>
-                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App.closeModal()">
+                ${passed?`<p style="color:#16a34a;font-size:0.88rem;margin-bottom:1rem">✓ Progresso salvo!</p>`:''}
+                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App.closeModal();App.showStudentModules(${this.currentCourse?.id||0},'${(this.currentCourse?.title||'').replace(/'/g,"\\'")}')">
                     ${passed?'✓ Concluir módulo':'Fechar e rever o conteúdo'}
                 </button>
             </div>`;
         };
         renderQ();
+    },
+
+    async renderStudentCertificates() {
+        this._resetContainerStyles();
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:'Meus Certificados',backLabel:'Início',backFn:'App.renderStudentDashboard()'})+
+            `<div id="certs-wrapper"><div class="loader">Carregando</div></div>`;
+        const res=await fetch('/my-certificates',{headers:this.apiHeaders()});
+        const certs=res.ok?await res.json():[];
+        const wrapper=document.getElementById('certs-wrapper');
+        if(!certs.length){
+            wrapper.innerHTML=`<div class="empty-state">
+                <div class="empty-icon">🏆</div>
+                <p>Você ainda não possui certificados.</p>
+                <p style="font-size:0.85rem;margin-top:0.5rem">Conclua módulos para ganhar certificados!</p>
+                <button class="btn btn-primary" style="margin-top:1rem" onclick="App.renderStudentPaths()">Ver Trilhas →</button>
+            </div>`;
+            return;
+        }
+        wrapper.innerHTML=`<div class="grid">` + certs.map(c=>{
+            const issued=c.issued_at?new Date(c.issued_at).toLocaleDateString('pt-BR'):'—';
+            const expires=c.expires_at?new Date(c.expires_at).toLocaleDateString('pt-BR'):null;
+            const expired=c.expires_at&&new Date(c.expires_at)<new Date();
+            return `<div class="card" style="display:flex;flex-direction:column;gap:0.75rem">
+                <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#fbbf24);display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏆</div>
+                <div>
+                    <h3 style="margin:0 0 0.25rem;font-size:1rem;color:var(--primary)">${c.module_title}</h3>
+                    <p style="font-size:0.82rem;color:var(--text-dim);margin:0">Emitido em ${issued}</p>
+                    ${expires?`<p style="font-size:0.78rem;margin:0.2rem 0 0;color:${expired?'#ef4444':'var(--text-dim)'}">
+                        ${expired?'⚠️ Expirado em':'Válido até'} ${expires}
+                    </p>`:'<p style="font-size:0.78rem;color:var(--text-dim);margin:0.2rem 0 0">Sem validade definida</p>'}
+                </div>
+                ${expired
+                    ? `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:#ef4444;background:#ef444418;border:1px solid #ef444435;align-self:flex-start">Expirado</span>`
+                    : `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:#22c55e;background:#22c55e18;border:1px solid #22c55e35;align-self:flex-start">✓ Válido</span>`
+                }
+            </div>`;
+        }).join('') + `</div>`;
     },
 
     closeModal() {
