@@ -106,10 +106,26 @@ def login(form_data: auth.LoginRequest, db: Session = Depends(get_db)):
 def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
+@app.post("/auth/change-password")
+def change_password(
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca", "colaborador", "usuario", "user"]))
+):
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 6 caracteres.")
+    if password == "Mudar@123":
+        raise HTTPException(status_code=400, detail="Escolha uma senha diferente da temporária.")
+    current_user.hashed_password = get_password_hash(password)
+    current_user.must_change_password = False
+    db.commit()
+    return {"message": "Senha alterada com sucesso!"}
+
 # ---------------- Admin: User Management ----------------
 @app.get("/admin/users", response_model=List[models.UserSchema])
 def list_users(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
     if current_user.role == "admin":
+        # Garante que o endpoint retorne TODOS os usuários, incluindo os com status 'pending'
         return db.query(models.User).all()
     # Liderança só vê membros da própria equipe
     return db.query(models.User).filter(models.User.team_id == current_user.team_id).all()
@@ -155,10 +171,7 @@ def admin_reset_password(user_id: int, db: Session = Depends(get_db), current_us
     base_url = os.getenv("BASE_URL", "https://app.geobiogas.tech")
     reset_link = f"{base_url}/?view=reset&token={reset_token}"
     
-    return {
-        "message": "Senha resetada para o padrão (Mudar@123). O usuário deverá trocar no próximo acesso.",
-        "reset_link": reset_link
-    }
+    return {"reset_link": reset_link}
 
 @app.delete("/admin/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
@@ -526,43 +539,9 @@ def delete_module(module_id: int, db: Session = Depends(get_db), current_user: m
     return {"message": "Mdulo excludo com sucesso"}
 
 # ---------------- Streaming ----------------
-def send_bytes_range_requests(file_obj, start: int, end: int, chunk_size: int = 10_000_000):
-    with file_obj as f:
-        f.seek(start)
-        while (pos := f.tell()) <= end:
-            read_size = min(chunk_size, end + 1 - pos)
-            yield f.read(read_size)
+# A rota /video agora é servida automaticamente pelo StaticFiles montado ao final do arquivo,
+# que já suporta Range Requests (Streaming) nativamente.
 
-@app.get("/video/{filename}")
-def get_video(filename: str, range: str = Header(None)):
-    video_path = os.path.join("uploads", filename)
-    if not os.path.exists(video_path):
-        raise HTTPException(status_code=404, detail="Video not found")
-    file_size = os.stat(video_path).st_size
-
-    if range is None:
-        return StreamingResponse(open(video_path, "rb"), media_type="video/mp4")
-
-    try:
-        byte1, byte2 = 0, None
-        match = range.replace("bytes=", "").split("-")
-        if match[0]: byte1 = int(match[0])
-        if len(match) > 1 and match[1]: byte2 = int(match[1])
-
-        start = byte1
-        end = byte2 if byte2 else file_size - 1
-        if start >= file_size or end >= file_size or start > end:
-            raise HTTPException(status_code=416, detail="Requested Range Not Satisfiable")
-        
-        headers = {
-            "Content-Range": f"bytes {start}-{end}/{file_size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(end - start + 1),
-            "Content-Type": "video/mp4",
-        }
-        return StreamingResponse(send_bytes_range_requests(open(video_path, "rb"), start, end), headers=headers, status_code=206)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Range Header")
 
 # ---------------- Quizzes & Exams ----------------
 @app.post("/modules/{module_id}/questions", response_model=models.QuestionSchema)
@@ -652,9 +631,12 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
     db.refresh(team)
 
     return team
-uploads_path = "uploads"
-if not os.path.exists(uploads_path): os.makedirs(uploads_path)
-app.mount("/uploads", StaticFiles(directory=uploads_path), name="uploads")
+# Caminhos corrigidos para a raiz do projeto
+root_uploads = os.path.join(os.path.dirname(__file__), "..", "uploads")
+if not os.path.exists(root_uploads): os.makedirs(root_uploads)
+
+app.mount("/uploads", StaticFiles(directory=root_uploads), name="uploads")
+app.mount("/video", StaticFiles(directory=root_uploads), name="video")
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):

@@ -42,36 +42,3 @@ def reset_password(token: str = Form(...), new_password: str = Form(...), db: Se
     
     db.commit()
     return {"message": "Senha redefinida com sucesso."}
-
-from auth import ALGORITHM, SECRET_KEY
-from jose import jwt
-
-@reset_router.post("/auth/change-password")
-def change_password(new_password: str = Form(...), db: Session = Depends(get_db), token: str = Depends(OAuth2PasswordBearer(tokenUrl="login"))):
-    if len(new_password) < 6:
-        raise HTTPException(status_code=400, detail="A nova senha deve ter pelo menos 6 caracteres.")
-    
-    # Decodificando token
-    credentials_exception = HTTPException(status_code=401, detail="Não autorizado")
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None: raise credentials_exception
-    except Exception:
-        raise credentials_exception
-        
-    current_user = db.query(models.User).filter(models.User.username == username).first()
-    if not current_user: raise credentials_exception
-
-    # Previne reusar a senha padrao
-    if verify_password(new_password, get_password_hash("Mudar@123")):
-        raise HTTPException(status_code=400, detail="A nova senha não pode ser igual à senha padrão.")
-        
-    current_user.hashed_password = get_password_hash(new_password)
-    current_user.must_change_password = False
-    
-    if current_user.status in ["convite_pendente", "convite_expirado"]:
-        current_user.status = "ativo"
-        
-    db.commit()
-    return {"message": "Sua senha foi alterada com sucesso!"}

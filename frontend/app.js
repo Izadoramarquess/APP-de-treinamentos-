@@ -1028,7 +1028,10 @@ const App = {
         const body  = document.getElementById('modal-body');
         modal.classList.remove('hidden');
         body.innerHTML = `
-            <h3 style="margin-bottom:1rem">${target.title}</h3>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                <h3 style="margin:0">${target.title}</h3>
+                <button onclick="App.closeModal()" style="background:transparent;border:none;cursor:pointer;font-size:1.5rem;color:var(--text-dim);padding:0;line-height:1">×</button>
+            </div>
             <div style="position:relative">
                 <video id="st-video" src="${target.video_url}" controls autoplay style="width:100%;border-radius:8px;background:#000;display:block"></video>
                 <div id="quiz-overlay" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);border-radius:8px;align-items:center;justify-content:center;padding:2rem;box-sizing:border-box;pointer-events:all;z-index:10">

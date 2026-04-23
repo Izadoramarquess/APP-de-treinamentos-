@@ -10,6 +10,7 @@ training_platform.db
 *.sqlite3
 
 # Uploads
+uploads/
 backend/uploads/*
 !backend/uploads/.gitkeep
 

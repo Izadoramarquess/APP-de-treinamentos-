@@ -5,6 +5,8 @@ import bcrypt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import models
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
 
 # Security settings
 SECRET_KEY = "super-secret-key-change-this-in-production"
@@ -67,7 +69,7 @@ def register_user(db: Session, user: UserCreate):
         hashed_password=hashed_password,
         department=user.department,
         role="usuario",
-        status="pendente"
+        status="pending"
     )
     db.add(db_user)
     db.commit()
@@ -92,3 +94,9 @@ def login_for_access_token(db: Session, form_data: LoginRequest):
         "token_type": "bearer", 
         "user": {"username": user.username, "role": user.role}
     }
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(lambda: None)): # Dependency injection wrapper expected
+    # Note: To avoid circular imports, get_db is passed at runtime via dependency overrides or closure.
+    pass # Will be implemented back in main.py instead, reverting this change!

@@ -26,11 +26,14 @@ class User(Base):
     invite_token = Column(String, nullable=True)
     invite_expires_at = Column(DateTime, nullable=True)
     invited_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reset_token = Column(String, nullable=True)
+    reset_token_expires = Column(DateTime, nullable=True)
+    must_change_password = Column(Boolean, default=False)
 
     team = relationship("Team", back_populates="members")
     enrollments = relationship("Enrollment", back_populates="user")
     certificates = relationship("Certificate", back_populates="user")
-    course_progress = relationship("CourseProgress", back_populates="user")
+    course_progress = relationship("ModuleProgress", back_populates="user")
     invited_by = relationship("User", remote_side=[id])
 
 class LearningPath(Base):
@@ -50,30 +53,42 @@ class Course(Base):
     order = Column(Integer, default=1)
     title = Column(String, index=True)
     description = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    path = relationship("LearningPath", back_populates="courses")
+    modules = relationship("Module", back_populates="course", order_by="Module.order")
+
+class Module(Base):
+    __tablename__ = "modules"
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True) # Temporarily nullable for migration
+    order = Column(Integer, default=1)
+    title = Column(String, index=True)
+    description = Column(Text)
     video_url = Column(String, nullable=True)
     thumbnail_url = Column(String, nullable=True)
     certificate_template_url = Column(String, nullable=True)
     validity_months = Column(Integer, nullable=True)
     
-    path = relationship("LearningPath", back_populates="courses")
-    materials = relationship("Material", back_populates="course")
-    questions = relationship("Question", back_populates="course")
-    progress = relationship("CourseProgress", back_populates="course")
-    certificates = relationship("Certificate", back_populates="course")
+    course = relationship("Course", back_populates="modules")
+    materials = relationship("Material", back_populates="module")
+    questions = relationship("Question", back_populates="module")
+    progress = relationship("ModuleProgress", back_populates="module")
+    certificates = relationship("Certificate", back_populates="module")
 
 class Material(Base):
     __tablename__ = "materials"
     id = Column(Integer, primary_key=True, index=True)
-    course_id = Column(Integer, ForeignKey("courses.id"))
+    module_id = Column(Integer, ForeignKey("modules.id"))
     title = Column(String)
     file_url = Column(String)
     
-    course = relationship("Course", back_populates="materials")
+    module = relationship("Module", back_populates="materials")
 
 class Question(Base):
     __tablename__ = "questions"
     id = Column(Integer, primary_key=True, index=True)
-    course_id = Column(Integer, ForeignKey("courses.id"))
+    module_id = Column(Integer, ForeignKey("modules.id"))
     text = Column(Text)
     option_a = Column(String)
     option_b = Column(String)
@@ -83,7 +98,7 @@ class Question(Base):
     is_final_exam = Column(Boolean, default=False)
     timestamp = Column(Float, nullable=True)
     
-    course = relationship("Course", back_populates="questions")
+    module = relationship("Module", back_populates="questions")
 
 class Enrollment(Base):
     __tablename__ = "enrollments"
@@ -95,29 +110,29 @@ class Enrollment(Base):
     user = relationship("User", back_populates="enrollments")
     path = relationship("LearningPath", back_populates="enrollments")
 
-class CourseProgress(Base):
-    __tablename__ = "course_progress"
+class ModuleProgress(Base):
+    __tablename__ = "module_progress"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    course_id = Column(Integer, ForeignKey("courses.id"))
+    module_id = Column(Integer, ForeignKey("modules.id"))
     is_completed = Column(Boolean, default=False)
     score_final = Column(Float, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     
     user = relationship("User", back_populates="course_progress")
-    course = relationship("Course", back_populates="progress")
+    module = relationship("Module", back_populates="progress")
 
 class Certificate(Base):
     __tablename__ = "certificates"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    course_id = Column(Integer, ForeignKey("courses.id"))
+    module_id = Column(Integer, ForeignKey("modules.id"))
     file_url = Column(String)
     issued_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
     
     user = relationship("User", back_populates="certificates")
-    course = relationship("Course", back_populates="certificates")
+    module = relationship("Module", back_populates="certificates")
 
 class EmailLog(Base):
     __tablename__ = "email_logs"
@@ -131,8 +146,6 @@ class EmailLog(Base):
     error_message = Column(Text, nullable=True)
 
 # --- Pydantic Schemas ---
-
-
 
 class MaterialSchema(BaseModel):
     id: int
@@ -152,9 +165,9 @@ class QuestionSchema(BaseModel):
     timestamp: Optional[float] = None
     class Config: from_attributes = True
 
-class CourseSchema(BaseModel):
+class ModuleSchema(BaseModel):
     id: int
-    path_id: int
+    course_id: Optional[int]
     order: int
     title: str
     description: str
@@ -164,6 +177,16 @@ class CourseSchema(BaseModel):
     validity_months: Optional[int] = None
     materials: List[MaterialSchema] = []
     questions: List[QuestionSchema] = []
+    class Config: from_attributes = True
+
+class CourseSchema(BaseModel):
+    id: int
+    path_id: int
+    order: int
+    title: str
+    description: str
+    created_at: datetime.datetime
+    modules: List[ModuleSchema] = []
     class Config: from_attributes = True
 
 class LearningPathSchema(BaseModel):
@@ -184,6 +207,7 @@ class UserSchema(BaseModel):
     team_id: Optional[int] = None
     invite_expires_at: Optional[datetime.datetime] = None
     invited_by_id: Optional[int] = None
+    must_change_password: bool = False
     class Config: from_attributes = True
 
 class EmailLogSchema(BaseModel):
