@@ -11,10 +11,24 @@ venv/
 training_platform.db
 *.sqlite3
 
-# Uploads
+# Uploads e vídeos
 uploads/
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Logs e arquivos temporários
+*.log
+error_log.txt
+token.txt
+
+# Scripts de debug e migração temporária
+check_db_cols.py
+check_db_debug.py
+check_user.py
+force_migrate.py
+check_folders.py
+migrate_status.py
+create_user_geo.py
 
 # OS
 .DS_Store
