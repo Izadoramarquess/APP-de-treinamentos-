@@ -119,7 +119,8 @@ const App = {
         } else if (role === 'lideranca') {
             navHtml = `
                 <a class="nav-link" onclick="App.renderLeaderDashboard()">Minha Equipe</a>
-                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>`;
+                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>
+                <a class="nav-link" onclick="App.renderStudentCertificates()">🏆 Certificados</a>`;
         } else {
             navHtml = `
                 <a class="nav-link" onclick="App.renderStudentDashboard()">Início</a>
@@ -210,12 +211,30 @@ const App = {
             e.preventDefault();
             const pass=document.getElementById('r-pass').value, pass2=document.getElementById('r-pass2').value;
             const err=document.getElementById('reset-err');
+            err.style.display='none';
             if(pass!==pass2){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
+            if(pass.length<6){err.textContent='A senha deve ter pelo menos 6 caracteres.';err.style.display='block';return;}
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Salvando...';
-            const fd=new FormData(); fd.append('token',document.getElementById('reset-token').value); fd.append('password',pass);
-            const res=await fetch('/auth/reset-password',{method:'POST',body:fd});
-            if(res.ok){alert('Senha redefinida! Faça login.');window.location.href='/';}
-            else{const d=await res.json();err.textContent=d.detail||'Token inválido ou expirado.';err.style.display='block';btn.disabled=false;btn.textContent='Redefinir senha';}
+            try {
+                const fd=new FormData();
+                fd.append('token', document.getElementById('reset-token').value);
+                fd.append('password', pass);
+                fd.append('new_password', pass); // envia os dois por segurança
+                const res=await fetch('/auth/reset-password',{method:'POST',body:fd});
+                const data=await res.json();
+                if(res.ok){
+                    alert('Senha redefinida com sucesso! Faça login.');
+                    window.location.href='/';
+                } else {
+                    err.textContent = data.detail || data.message || 'Token inválido ou expirado.';
+                    err.style.display='block';
+                    btn.disabled=false; btn.textContent='Redefinir senha';
+                }
+            } catch(e) {
+                err.textContent='Erro de conexão. Tente novamente.';
+                err.style.display='block';
+                btn.disabled=false; btn.textContent='Redefinir senha';
+            }
         };
     },
 
@@ -912,40 +931,32 @@ const App = {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Minha Equipe',actionLabel:'+ Convidar Colaborador',actionFn:'App.showInviteUserModal()'})+`
-            <!-- Stats da equipe -->
             <div class="grid-stats" id="team-stats" style="margin-bottom:1.5rem">
                 <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="ts-members">—</div><div class="stat-label">Membros Ativos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-done">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">📊</div><div class="stat-info"><div class="stat-value" id="ts-pct">—</div><div class="stat-label">Progresso Médio</div></div></div>
             </div>
-            <!-- Tabela de progresso -->
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="team-table">
                     <thead><tr><th>Colaborador</th><th>E-mail</th><th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Ações</th></tr></thead>
                     <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
-
         try {
+            // Usa /team/progress que já filtra por equipe corretamente
             const res=await fetch('/team/progress',{headers:this.apiHeaders()});
             const members=await res.json();
             const tbody=document.querySelector('#team-table tbody'); tbody.innerHTML='';
-
             if(!members.length){
                 tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>';
-                document.getElementById('ts-members').textContent='0';
-                document.getElementById('ts-done').textContent='0';
-                document.getElementById('ts-pct').textContent='0%';
+                ['ts-members','ts-done','ts-pct'].forEach(id=>document.getElementById(id).textContent='0');
                 return;
             }
-
-            // Stats
             const totalDone=members.reduce((s,m)=>s+m.modules_done,0);
             const avgPct=Math.round(members.reduce((s,m)=>s+m.percent,0)/members.length);
             document.getElementById('ts-members').textContent=members.length;
             document.getElementById('ts-done').textContent=totalDone;
             document.getElementById('ts-pct').textContent=avgPct+'%';
-
             members.forEach(u=>{
                 const pct=u.percent||0;
                 const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
@@ -959,15 +970,13 @@ const App = {
                             <div class="progress-track" style="flex:1;height:6px">
                                 <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
                             </div>
-                            <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:30px">${pct}%</span>
+                            <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
                         </div>
                     </td>
                     <td>${this.actionBtn('🎯 Atribuir Trilha',`App.showAssignPathModal(${u.user_id},'${u.username}')`)}</td>
                 </tr>`;
             });
-        } catch(e) {
-            console.error('Erro ao carregar equipe:', e);
-        }
+        } catch(e) { console.error('Erro ao carregar equipe:', e); }
     },
 
     showAddMemberModal() {
@@ -1009,10 +1018,22 @@ const App = {
                 </div>
             </form>`;
         document.getElementById('assign-form').onsubmit=async(e)=>{
-            e.preventDefault(); const fd=new FormData();
+            e.preventDefault();
+            const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Atribuindo...';
+            const fd=new FormData();
             fd.append('user_id',userId); fd.append('path_id',document.getElementById('a-path').value);
-            await fetch('/enrollments',{method:'POST',headers:this.apiHeaders(),body:fd});
-            this.closeModal(); alert('Trilha atribuída com sucesso!');
+            const res=await fetch('/enrollments',{method:'POST',headers:this.apiHeaders(),body:fd});
+            if(res.ok){
+                this.closeModal();
+                alert('Trilha atribuída com sucesso!');
+                // Recarregar a visão atual
+                if(this.user.role==='lideranca') this.renderLeaderDashboard();
+                else this.renderAdminUsers();
+            } else {
+                const d=await res.json();
+                alert(d.detail||'Erro ao atribuir trilha.');
+                btn.disabled=false; btn.textContent='Atribuir';
+            }
         };
         modal.classList.remove('hidden');
     },
@@ -1142,8 +1163,13 @@ const App = {
         if(!courses.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso disponível.</p></div>';return;}
         // Buscar progresso de cada curso
         for(const c of courses){
-            let done=0, total=(c.modules||[]).length;
+            let done=0, total=0;
             try{
+                // Buscar módulos reais do curso
+                const modRes=await fetch(`/courses/${c.id}/modules`,{headers:this.apiHeaders()});
+                const mods=modRes.ok?await modRes.json():[];
+                total=mods.length;
+                // Buscar progresso
                 const pr=await fetch(`/courses/${c.id}/progress`,{headers:this.apiHeaders()});
                 if(pr.ok){const d=await pr.json();done=d.filter(x=>x.completed).length;}
             }catch(e){}
@@ -1243,16 +1269,17 @@ const App = {
             ${alreadyDone&&!finalQuizzes.length?'<div style="margin-top:1rem;text-align:center;padding:0.75rem;background:rgba(34,197,94,.15);border-radius:8px;color:#86efac;font-size:0.88rem">✓ Módulo já concluído — você está revisando o conteúdo</div>':''}`;
 
         const video=document.getElementById('st-video'), asked=new Set();
+        let moduleCompleted=false; // Flag para evitar duplo registro
         video.ontimeupdate=()=>{
             if(video.paused) return;
             inlineQuizzes.forEach(q=>{
                 if(Math.abs(video.currentTime-q.timestamp)<0.5&&!asked.has(q.id)){asked.add(q.id);video.pause();video.controls=false;this.showQuizOverlay(q);}
             });
-            // Marcar como concluído ao chegar no fim (sem prova final)
             if(video.duration>0&&video.currentTime>=video.duration-1){
                 if(finalQuizzes.length>0){
                     document.getElementById('final-exam-section').style.display='block';
-                } else if(!alreadyDone){
+                } else if(!alreadyDone&&!moduleCompleted){
+                    moduleCompleted=true; // Previne chamadas múltiplas
                     this.markModuleComplete(moduleId, 100);
                 }
             }
@@ -1330,7 +1357,7 @@ const App = {
                 <p style="font-size:2.5rem;font-weight:800;color:${passed?'#22c55e':'#f59e0b'};margin:0.5rem 0;line-height:1">${score}%</p>
                 <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1.5rem">${correct} de ${questions.length} corretas — mínimo 80%</p>
                 ${passed?`<p style="color:#16a34a;font-size:0.88rem;margin-bottom:1rem">✓ Progresso salvo!</p>`:''}
-                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App.closeModal();App.showStudentModules(${this.currentCourse?.id||0},'${(this.currentCourse?.title||'').replace(/'/g,"\\'")}')">
+                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App._afterExam(${passed},${moduleId})">
                     ${passed?'✓ Concluir módulo':'Fechar e rever o conteúdo'}
                 </button>
             </div>`;
@@ -1374,6 +1401,15 @@ const App = {
                 }
             </div>`;
         }).join('') + `</div>`;
+    },
+
+    _afterExam(passed, moduleId) {
+        this.closeModal();
+        if (this.currentCourse && this.currentCourse.id) {
+            this.showStudentModules(this.currentCourse.id, this.currentCourse.title);
+        } else {
+            this.renderStudentDashboard();
+        }
     },
 
     closeModal() {
