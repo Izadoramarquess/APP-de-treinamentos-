@@ -37,3 +37,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+backend/test_output.md
+backend/test_api.log

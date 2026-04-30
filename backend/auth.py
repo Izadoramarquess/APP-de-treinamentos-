@@ -25,6 +25,7 @@ class UserCreate(BaseModel):
     email: str
     password: str
     department: Optional[str] = None
+    invite_token: Optional[str] = None  # ← token de convite opcional no cadastro
 
 class LoginRequest(BaseModel):
     username: str
@@ -52,16 +53,32 @@ def register_user(db: Session, user: UserCreate):
 
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
     if existing_user:
+        # ✅ BUG 1 CORRIGIDO: só ativa automaticamente se vier com token de convite válido
         if existing_user.status == "convite_pendente":
-            existing_user.username = user.username
-            existing_user.hashed_password = get_password_hash(user.password)
-            existing_user.department = user.department
-            existing_user.status = "ativo"
-            db.commit()
-            return {"message": "Cadastro concluído. Seu convite foi aceito automaticamente!"}
+            # Verifica se o token de convite foi fornecido e corresponde ao do usuário
+            if (
+                user.invite_token
+                and existing_user.invite_token
+                and user.invite_token == existing_user.invite_token
+                and existing_user.invite_expires_at
+                and existing_user.invite_expires_at > datetime.utcnow()
+            ):
+                existing_user.username = user.username
+                existing_user.hashed_password = get_password_hash(user.password)
+                existing_user.department = user.department
+                existing_user.status = "ativo"
+                existing_user.invite_token = None  # invalida o token após uso
+                db.commit()
+                return {"message": "Cadastro concluído. Seu convite foi aceito!"}
+            elif user.invite_token and existing_user.invite_expires_at and existing_user.invite_expires_at <= datetime.utcnow():
+                return {"error": "Token de convite expirado. Solicite um novo convite ao administrador."}
+            else:
+                # E-mail com convite pendente mas sem token válido → não ativa
+                return {"error": "E-mail com convite pendente. Use o link de convite enviado pelo administrador."}
         else:
             return {"error": "E-mail já cadastrado."}
 
+    # Cadastro novo (sem convite) → sempre fica como "pending" aguardando aprovação do admin
     hashed_password = get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
@@ -69,34 +86,38 @@ def register_user(db: Session, user: UserCreate):
         hashed_password=hashed_password,
         department=user.department,
         role="colaborador",
-        status="pending"
+        status="pending"  # ← nunca "ativo" sem aprovação
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    return {"message": "Cadastro criado com sucesso. Aguardando aprovação."}
+    return {"message": "Cadastro criado com sucesso. Aguardando aprovação do administrador."}
 
 def login_for_access_token(db: Session, form_data: LoginRequest):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         return {"error": "Usuário ou senha incorretos"}
-        
+
     if user.status not in ["ativo", "approved"]:
-        return {"error": "Cadastro pendente ou convite expirado."}
-    
+        return {"error": "Cadastro pendente de aprovação ou convite não aceito."}
+
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username, "role": user.role}, 
+        data={"sub": user.username, "role": user.role},
         expires_delta=access_token_expires
     )
     return {
-        "access_token": access_token, 
-        "token_type": "bearer", 
-        "user": {"username": user.username, "role": user.role}
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "username": user.username,
+            "role": user.role,
+            "must_change_password": user.must_change_password  # ← envia flag para o frontend
+        }
     }
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(lambda: None)): # Dependency injection wrapper expected
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(lambda: None)):
     # Note: To avoid circular imports, get_db is passed at runtime via dependency overrides or closure.
-    pass # Will be implemented back in main.py instead, reverting this change!
+    pass  # Will be implemented back in main.py instead, reverting this change!

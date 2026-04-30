@@ -355,17 +355,22 @@ def admin_reset_password(user_id: int, db: Session = Depends(get_db), current_us
         raise HTTPException(status_code=404, detail="User not found")
     user.hashed_password = get_password_hash("Mudar@123")
     user.must_change_password = True
-    
+
+    # ✅ BUG 2 CORRIGIDO: garante que o usuário fique "ativo" ao ter senha resetada pelo admin,
+    # pois o próprio ato de reset implica aprovação do acesso.
+    if user.status in ["pending", "convite_pendente", "convite_expirado"]:
+        user.status = "ativo"
+
     reset_token = secrets.token_urlsafe(32)
     user.reset_token = reset_token
     user.reset_token_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-    
+
     db.commit()
-    
+
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     reset_link = f"{base_url}/?view=reset&token={reset_token}"
-    
-    return {"reset_link": reset_link}
+
+    return {"reset_link": reset_link, "status_updated": user.status}
 
 @app.delete("/admin/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
@@ -783,6 +788,9 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
         user = db.query(models.User).filter(models.User.email == email_addr).first()
         if user:
+            # BUG 3 CORRIGIDO: admin é o papel mais alto — nunca pode ser vinculado como membro de equipe
+            if user.role == "admin":
+                return  # ignora silenciosamente sem erro
             user.team_id = team.id
             if is_admin: user.role = "lideranca"
             team_members_ids.append(user.id)
