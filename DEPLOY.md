@@ -1,79 +1,101 @@
-# Guia de Deploy — GeoTrilha LMS
+# Deploy — GeoTrilha LMS
 
-Este guia descreve como subir a plataforma GeoTrilha LMS em um servidor de produção Linux (Ubuntu).
+Tudo roda via **Docker Compose**. Você precisa apenas de Docker instalado no servidor.
 
-## 1. Requisitos do Servidor
-- Ubuntu 22.04 LTS ou superior
-- Python 3.11+
-- Nginx
-- Git
+---
 
-## 2. Preparação do Ambiente
+## Requisitos
 
-### Instalar Dependências do Sistema
+- Linux (Ubuntu 22.04+ recomendado)
+- [Docker](https://docs.docker.com/engine/install/ubuntu/) + Docker Compose plugin
+
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install python3-pip python3-venv nginx certbot python3-certbot-nginx -y
+# Instalar Docker (Ubuntu)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Faça logout e login novamente para o grupo ter efeito
 ```
 
-### Clonar o Projeto
+---
+
+## 1ª vez: Subir o projeto
+
 ```bash
+# 1. Clonar o repositório
 git clone https://github.com/Izadoramarquess/APP-de-treinamentos-.git
 cd APP-de-treinamentos-
+
+# 2. Criar o arquivo de configuração
+cp .env.example .env
+nano .env   # Edite as senhas e o domínio
+
+# 3. Subir tudo
+docker compose up --build -d
+
+# 4. Verificar se está rodando
+docker compose ps
 ```
 
-### Criar Ambiente Virtual
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r backend/requirements.txt
-```
+O app estará disponível em `http://IP-DO-SERVIDOR:8000`
 
-## 3. Configuração de Produção
+**Login padrão:** `admin` / `admin` — **troque a senha no primeiro acesso.**
 
-### Arquivo .env
-Edite o arquivo `backend/.env` e ajuste as variáveis:
-- `BASE_URL`: Sua URL pública (ex: `https://treinamentos.geobiogas.tech`)
-- `ALLOWED_ORIGINS`: O mesmo domínio acima.
-- `SECRET_KEY`: Já geramos uma forte, mas você pode trocar se desejar.
+---
 
-### Permissões
-Garanta que o usuário do servidor tenha permissão de escrita nas pastas `uploads/` e no banco de dados.
-
-## 4. Configuração do Systemd (Serviço)
-Para manter o servidor rodando sempre, crie um serviço no Linux:
+## Atualizar o projeto (sem perder o banco)
 
 ```bash
-sudo nano /etc/systemd/system/geotrilha.service
+bash update.sh
 ```
 
-Cole o conteúdo abaixo (ajustando os caminhos):
-```ini
-[Unit]
-Description=Gunicorn instance to serve GeoTrilha LMS
-After=network.target
+Isso faz `git pull` e reconstrói apenas os containers do app.
+**O banco de dados (volume Docker) é sempre preservado.**
 
-[Service]
-User=ubuntu
-Group=www-data
-WorkingDirectory=/home/ubuntu/APP-de-treinamentos-/backend
-Environment="PATH=/home/ubuntu/APP-de-treinamentos-/venv/bin"
-ExecStart=/home/ubuntu/APP-de-treinamentos-/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+---
 
-[Install]
-WantedBy=multi-user.target
-```
-
-Ative o serviço:
-```bash
-sudo systemctl start geotrilha
-sudo systemctl enable geotrilha
-```
-
-## 5. Proxy Reverso com Nginx
-Configure o Nginx para receber as requisições na porta 80/443 e repassar para o FastAPI.
+## Parar / Reiniciar
 
 ```bash
+# Parar sem apagar nada
+docker compose stop
+
+# Reiniciar
+docker compose start
+
+# Ver logs em tempo real
+docker compose logs -f backend
+```
+
+---
+
+## Backup do banco de dados
+
+```bash
+# Fazer backup
+docker compose exec db pg_dump -U user training_db > backup_$(date +%Y%m%d).sql
+
+# Restaurar backup
+cat backup_YYYYMMDD.sql | docker compose exec -T db psql -U user training_db
+```
+
+---
+
+## IMPORTANTE — O que NUNCA fazer
+
+```bash
+# ❌ NUNCA execute este comando — apaga o banco de dados permanentemente
+docker compose down -v
+```
+
+Para parar o serviço com segurança use `docker compose stop` ou `docker compose down` (sem o `-v`).
+
+---
+
+## Proxy reverso com Nginx (opcional — para usar domínio + HTTPS)
+
+```bash
+sudo apt install nginx certbot python3-certbot-nginx -y
+
 sudo nano /etc/nginx/sites-available/geotrilha
 ```
 
@@ -82,6 +104,8 @@ server {
     listen 80;
     server_name seu-dominio.com;
 
+    client_max_body_size 500M;
+
     location / {
         proxy_pass http://localhost:8000;
         proxy_set_header Host $host;
@@ -89,31 +113,15 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-
-    # Servir arquivos estáticos diretamente pelo Nginx (Opcional, mas recomendado para performance)
-    location /uploads/ {
-        alias /home/ubuntu/APP-de-treinamentos-/uploads/;
-    }
 }
 ```
 
-Ative o site e reinicie o Nginx:
 ```bash
-sudo ln -s /etc/nginx/sites-available/geotrilha /etc/nginx/sites-enabled
-sudo nginx -t
-sudo systemctl restart nginx
-```
+sudo ln -s /etc/nginx/sites-available/geotrilha /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 
-## 6. SSL com Let's Encrypt
-```bash
+# SSL gratuito com Let's Encrypt
 sudo certbot --nginx -d seu-dominio.com
 ```
 
-## 7. Manutenção
-Sempre que atualizar o código:
-```bash
-git pull
-source venv/bin/activate
-pip install -r backend/requirements.txt
-sudo systemctl restart geotrilha
-```
+Depois edite o `.env` com o domínio real e rode `bash update.sh`.
