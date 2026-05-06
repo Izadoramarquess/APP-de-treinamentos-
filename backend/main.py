@@ -19,6 +19,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Diretório de uploads — definido uma vez, usado em toda a app
+UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads"))
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+os.makedirs(os.path.join(UPLOADS_DIR, "temp"), exist_ok=True)
 
 
 from contextlib import asynccontextmanager
@@ -637,8 +641,8 @@ def list_modules(course_id: int, db: Session = Depends(get_db)):
 
 @app.post("/modules/upload/init")
 def init_upload(filename: str, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    upload_dir = "uploads/temp"
-    if not os.path.exists(upload_dir): os.makedirs(upload_dir)
+    upload_dir = os.path.join(UPLOADS_DIR, "temp")
+    os.makedirs(upload_dir, exist_ok=True)
     upload_id = str(uuid.uuid4())
     temp_file_path = os.path.join(upload_dir, f"{upload_id}_{filename}")
     with open(temp_file_path, "wb") as f: pass
@@ -646,7 +650,7 @@ def init_upload(filename: str, db: Session = Depends(get_db), current_user: mode
 
 @app.post("/modules/upload/chunk")
 def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_index: int = Form(...), chunk: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    temp_file_path = os.path.join("uploads/temp", f"{upload_id}_{filename}")
+    temp_file_path = os.path.join(UPLOADS_DIR, "temp", f"{upload_id}_{filename}")
     if not os.path.exists(temp_file_path):
         raise HTTPException(status_code=404, detail="Upload init not found")
     with open(temp_file_path, "ab") as f:
@@ -669,8 +673,7 @@ def create_module(
     current_user: models.User = Depends(authorize(["admin"]))
 ):
     video_url = None
-    final_dir = "uploads"
-    if not os.path.exists(final_dir): os.makedirs(final_dir)
+    final_dir = UPLOADS_DIR
 
     # Upload direto de arquivo de vídeo
     if video and video.filename:
@@ -682,7 +685,7 @@ def create_module(
 
     # Upload via chunked (sobrescreve se os dois forem enviados)
     if upload_id and filename:
-        temp_file_path = os.path.join("uploads/temp", f"{upload_id}_{filename}")
+        temp_file_path = os.path.join(UPLOADS_DIR, "temp", f"{upload_id}_{filename}")
         if os.path.exists(temp_file_path):
             final_file_path = os.path.join(final_dir, filename)
             shutil.move(temp_file_path, final_file_path)
@@ -860,11 +863,8 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
 
     return team
 # Caminhos corrigidos para a raiz do projeto
-root_uploads = os.path.join(os.path.dirname(__file__), "..", "uploads")
-if not os.path.exists(root_uploads): os.makedirs(root_uploads)
-
-app.mount("/uploads", StaticFiles(directory=root_uploads), name="uploads")
-app.mount("/video", StaticFiles(directory=root_uploads), name="video")
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+app.mount("/video", StaticFiles(directory=UPLOADS_DIR), name="video")
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
