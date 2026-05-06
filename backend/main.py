@@ -21,7 +21,15 @@ load_dotenv()
 
 
 
-app = FastAPI(title="GeoTrilha LMS API")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    """Inicializa o banco de dados ao subir o servidor (uvicorn ou gunicorn)."""
+    database.init_db()
+    yield
+
+app = FastAPI(title="GeoTrilha LMS API", lifespan=lifespan)
 
 # CORS Configuration
 origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
@@ -591,7 +599,7 @@ def list_courses(path_id: int, db: Session = Depends(get_db)):
     return db.query(models.Course).filter(models.Course.path_id == path_id).order_by(models.Course.order).all()
 
 @app.post("/paths/{path_id}/courses", response_model=models.CourseSchema)
-def create_course(path_id: int, title: str = Form(...), description: str = Form(...), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def create_course(path_id: int, title: str = Form(...), description: str = Form(""), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     course = models.Course(path_id=path_id, title=title, description=description, order=order)
     db.add(course)
     db.commit()
@@ -599,10 +607,10 @@ def create_course(path_id: int, title: str = Form(...), description: str = Form(
     return course
 
 @app.put("/courses/{course_id}", response_model=models.CourseSchema)
-def update_course(course_id: int, title: str = Form(...), description: str = Form(...), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def update_course(course_id: int, title: str = Form(...), description: str = Form(""), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
-        raise HTTPException(status_code=404, detail="Curso no encontrado")
+        raise HTTPException(status_code=404, detail="Curso não encontrado")
     course.title = title
     course.description = description
     course.order = order
@@ -648,12 +656,13 @@ def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_in
 @app.post("/courses/{course_id}/modules", response_model=models.ModuleSchema)
 def create_module(
     course_id: int,
-    title: str = Form(...), 
-    description: str = Form(...), 
+    title: str = Form(...),
+    description: str = Form(""),
     order: int = Form(1),
     validity_months: int = Form(None),
-    upload_id: str = Form(None), 
-    filename: str = Form(None), 
+    upload_id: str = Form(None),
+    filename: str = Form(None),
+    video: UploadFile = File(None),
     thumbnail: UploadFile = File(None),
     cert_template: UploadFile = File(None),
     db: Session = Depends(get_db),
@@ -663,6 +672,15 @@ def create_module(
     final_dir = "uploads"
     if not os.path.exists(final_dir): os.makedirs(final_dir)
 
+    # Upload direto de arquivo de vídeo
+    if video and video.filename:
+        video_filename = f"{uuid.uuid4()}_{video.filename}"
+        video_path = os.path.join(final_dir, video_filename)
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
+        video_url = f"/video/{video_filename}"
+
+    # Upload via chunked (sobrescreve se os dois forem enviados)
     if upload_id and filename:
         temp_file_path = os.path.join("uploads/temp", f"{upload_id}_{filename}")
         if os.path.exists(temp_file_path):
@@ -743,10 +761,18 @@ def delete_module(module_id: int, db: Session = Depends(get_db), current_user: m
 
 
 # ---------------- Quizzes & Exams ----------------
+@app.get("/modules/{module_id}/questions", response_model=List[models.QuestionSchema])
+def list_questions(
+    module_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    return db.query(models.Question).filter(models.Question.module_id == module_id).all()
+
 @app.post("/modules/{module_id}/questions", response_model=models.QuestionSchema)
 def add_question(
-    module_id: int, 
-    question_data: dict, 
+    module_id: int,
+    question_data: dict,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):

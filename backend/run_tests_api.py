@@ -71,10 +71,24 @@ else:
     add_result("TC-030", "Criar módulo com upload de vídeo", "⚠️ Bloqueado", "Depende do TC-029.")
 
 # TC-031: Adicionar questao de quiz ao modulo
+# FIX: endpoint espera JSON body com campos text/option_a.../correct_option
 print("Iniciando TC-031...")
 if mod_id:
-    q_data = {"question_text": "Teste?", "options": json.dumps([{"text":"A", "is_correct":True}]), "timestamp": 10}
-    r_quiz = requests.post(f"{BASE_URL}/modules/{mod_id}/questions", headers=admin_headers, data=q_data)
+    q_data = {
+        "text": "Qual é o principal objetivo da LGPD?",
+        "option_a": "Proteger dados pessoais",
+        "option_b": "Regular o mercado financeiro",
+        "option_c": "Controlar o acesso à internet",
+        "option_d": "Definir impostos digitais",
+        "correct_option": "a",
+        "timestamp": 10,
+        "is_final_exam": False
+    }
+    r_quiz = requests.post(
+        f"{BASE_URL}/modules/{mod_id}/questions",
+        headers={**admin_headers, "Content-Type": "application/json"},
+        json=q_data
+    )
     if r_quiz.status_code == 200:
         add_result("TC-031", "Adicionar questão de quiz ao módulo", "✅ Passou", "Questão adicionada.")
     else:
@@ -83,11 +97,16 @@ else:
     add_result("TC-031", "Adicionar questão de quiz ao módulo", "⚠️ Bloqueado", "Depende do TC-030.")
 
 # TC-033: Matricular usuario em trilha
+# FIX: endpoint correto é POST /enrollments com user_id e path_id no body
 print("Iniciando TC-033...")
 r_users = requests.get(f"{BASE_URL}/admin/users", headers=admin_headers)
 user_id = next((u["id"] for u in r_users.json() if u["username"] == "colaborador_teste"), None)
 if user_id and path_id:
-    r_enroll = requests.post(f"{BASE_URL}/admin/users/{user_id}/enroll", headers=admin_headers, data={"path_id": path_id})
+    r_enroll = requests.post(
+        f"{BASE_URL}/enrollments",
+        headers=admin_headers,
+        data={"user_id": user_id, "path_id": path_id}
+    )
     if r_enroll.status_code == 200:
         add_result("TC-033", "Matricular usuário em trilha", "✅ Passou", "Usuário matriculado com sucesso.")
     else:
@@ -105,23 +124,34 @@ else:
 print("Recriando trilha...")
 # --- Bloco 6 e 7 ---
 # Recriar uma trilha para os testes do aluno
+video_url = None  # será preenchido quando o módulo for criado
 r_path = requests.post(f"{BASE_URL}/paths", headers=admin_headers, data={"title": "Trilha Aluno API", "description": ""})
 path_id = r_path.json().get("id")
 
 if path_id:
     print("Recriando curso...")
-    r_course = requests.post(f"{BASE_URL}/paths/{path_id}/courses", headers=admin_headers, data={"title": "C", "description": "", "order":1})
+    r_course = requests.post(f"{BASE_URL}/paths/{path_id}/courses", headers=admin_headers, data={"title": "Curso Aluno", "description": "Curso para teste do aluno", "order": 1})
+    if r_course.status_code != 200:
+        print(f"ERRO ao recriar curso: {r_course.status_code} {r_course.text}")
     course_id = r_course.json().get("id")
-    
+
     if course_id:
         print("Recriando modulo...")
-        files = {'video': ('test.mp4', b'dummy', 'video/mp4')}
-        r_mod = requests.post(f"{BASE_URL}/courses/{course_id}/modules", headers=admin_headers, data={"title": "M", "description": "", "order": 1, "validity_months":12}, files=files)
+        files = {'video': ('test_aluno.mp4', b'dummy video content', 'video/mp4')}
+        r_mod = requests.post(f"{BASE_URL}/courses/{course_id}/modules", headers=admin_headers, data={"title": "Modulo Aluno", "description": "Modulo de teste", "order": 1, "validity_months": 12}, files=files)
+        if r_mod.status_code != 200:
+            print(f"ERRO ao recriar modulo: {r_mod.status_code} {r_mod.text}")
         mod_id = r_mod.json().get("id")
-        print("Matriculando...")
-        requests.post(f"{BASE_URL}/admin/users/{user_id}/enroll", headers=admin_headers, data={"path_id": path_id})
+        video_url = r_mod.json().get("video_url")  # URL real do vídeo
+        print(f"Modulo recriado: id={mod_id}, video_url={video_url}")
     else:
         mod_id = None
+
+    # Matrícula feita independente do módulo (usuário precisa estar na trilha)
+    print("Matriculando...")
+    r_enroll2 = requests.post(f"{BASE_URL}/enrollments", headers=admin_headers, data={"user_id": user_id, "path_id": path_id})
+    if r_enroll2.status_code != 200:
+        print(f"ERRO ao matricular: {r_enroll2.status_code} {r_enroll2.text}")
 else:
     course_id = None
     mod_id = None
@@ -176,13 +206,15 @@ else:
     add_result("TC-034", "Visualizar trilhas matriculadas", "❌ Falhou", f"Erro: {r_mypaths.text}")
 
 print("Iniciando TC-035...")
-# TC-035
-# Just verify video URL response
-r_vid = requests.get(f"{BASE_URL}/video/test.mp4", headers=colab_headers, timeout=5)
-if r_vid.status_code in [200, 206]:
-    add_result("TC-035", "Assistir vídeo (streaming/seek)", "✅ Passou", "Endpoint do vídeo acessível.")
+# TC-035: FIX — usa a URL real do vídeo retornada pelo módulo, não um caminho hardcoded
+if video_url:
+    r_vid = requests.get(f"{BASE_URL}{video_url}", headers=colab_headers, timeout=5)
+    if r_vid.status_code in [200, 206]:
+        add_result("TC-035", "Assistir vídeo (streaming/seek)", "✅ Passou", f"Endpoint do vídeo acessível ({video_url}).")
+    else:
+        add_result("TC-035", "Assistir vídeo (streaming/seek)", "❌ Falhou", f"Endpoint retornou: {r_vid.status_code} para {video_url}")
 else:
-    add_result("TC-035", "Assistir vídeo (streaming/seek)", "❌ Falhou", f"Endpoint retornou: {r_vid.status_code}")
+    add_result("TC-035", "Assistir vídeo (streaming/seek)", "⚠️ Bloqueado", "video_url não retornado pelo módulo.")
 
 print("Iniciando TC-036...")
 # TC-036
