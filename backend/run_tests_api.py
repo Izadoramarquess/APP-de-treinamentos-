@@ -1,9 +1,16 @@
+import os
 import requests
 import json
 from datetime import datetime, timedelta
 import sqlite3
+from dotenv import load_dotenv
 
-BASE_URL = "http://localhost:8000"
+load_dotenv()
+
+# Variável separada de BASE_URL (que no .env é a URL pública de produção,
+# usada para montar links de convite/reset) — este script cria e apaga
+# dados de verdade, então não deve rodar contra produção por acidente.
+BASE_URL = os.getenv("API_TEST_BASE_URL", "http://localhost:8000")
 
 results = []
 

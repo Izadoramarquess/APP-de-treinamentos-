@@ -273,17 +273,17 @@ Object.assign(App, {
             return;
         }
         wrapper.innerHTML=`<div class="grid">` + certs.map(c=>{
-            const issued=c.issued_at?new Date(c.issued_at).toLocaleDateString('pt-BR'):'—';
-            const expires=c.expires_at?new Date(c.expires_at).toLocaleDateString('pt-BR'):null;
-            const expired=c.expires_at&&new Date(c.expires_at)<new Date();
+            const issued=c.issued_at?new Date(c.issued_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
+            const expires=c.expires_at?new Date(c.expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):null;
+            const expired=expires&&new Date(c.expires_at)<new Date();
             return `<div class="card" style="display:flex;flex-direction:column;gap:0.75rem">
                 <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#fbbf24);display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏆</div>
                 <div>
                     <h3 style="margin:0 0 0.25rem;font-size:1rem;color:var(--primary)">${c.module_title}</h3>
                     <p style="font-size:0.82rem;color:var(--text-dim);margin:0">Emitido em ${issued}</p>
-                    ${expires?`<p style="font-size:0.78rem;margin:0.2rem 0 0;color:${expired?'#ef4444':'var(--text-dim)'}">
+                    <p style="font-size:0.78rem;margin:0.2rem 0 0;color:${expired?'#ef4444':'var(--text-dim)'}">
                         ${expired?'⚠️ Expirado em':'Válido até'} ${expires}
-                    </p>`:'<p style="font-size:0.78rem;color:var(--text-dim);margin:0.2rem 0 0">Sem validade definida</p>'}
+                    </p>
                 </div>
                 ${expired
                     ? `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:#ef4444;background:#ef444418;border:1px solid #ef444435;align-self:flex-start">Expirado</span>`

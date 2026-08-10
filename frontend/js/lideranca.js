@@ -9,19 +9,24 @@ Object.assign(App, {
             <form id="add-member-form">
                 <div class="form-group"><label>Usuário</label><input type="text" id="m-user" class="form-control" required></div>
                 <div class="form-group"><label>E-mail</label><input type="email" id="m-email" class="form-control" required></div>
-                <div class="form-group"><label>Senha inicial</label><input type="password" id="m-pass" class="form-control" required></div>
+                <div class="form-group"><label>Departamento</label><input type="text" id="m-dept" class="form-control" required></div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
-                    <button type="submit" class="btn btn-primary" style="flex:1">Cadastrar</button>
+                    <button type="submit" class="btn btn-primary" style="flex:1">Gerar convite</button>
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
                 </div>
             </form>`;
         document.getElementById('add-member-form').onsubmit=async(e)=>{
-            e.preventDefault(); const fd=new FormData();
+            e.preventDefault();
+            const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Gerando...';
+            const fd=new FormData();
             fd.append('username',document.getElementById('m-user').value);
             fd.append('email',document.getElementById('m-email').value);
-            fd.append('password',document.getElementById('m-pass').value);
-            await fetch('/admin/users',{method:'POST',headers:this.apiHeaders(),body:fd});
-            this.closeModal(); this.renderLeaderDashboard();
+            fd.append('department',document.getElementById('m-dept').value);
+            // Time é atribuído automaticamente pelo backend (equipe do próprio líder).
+            const res=await fetch('/admin/users/invite',{method:'POST',headers:this.apiHeaders(),body:fd});
+            const data=await res.json();
+            if(res.ok){this.closeModal();this.renderLeaderDashboard();this.showCopyLinkModal('Convite Gerado ✓','Envie este link para o novo colaborador:',data.invite_link);}
+            else{alert(data.detail||'Erro ao gerar convite.');btn.disabled=false;btn.textContent='Gerar convite';}
         };
         modal.classList.remove('hidden');
     },

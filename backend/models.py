@@ -21,8 +21,8 @@ class User(Base):
     hashed_password = Column(String)
     role = Column(String, default="usuario") # 'admin', 'lideranca', 'usuario'
     status = Column(String, default="pending") # 'pendente', 'ativo', 'convite_pendente', 'convite_expirado'
-    department = Column(String, nullable=True)
-    team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
+    department = Column(String, nullable=False)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
     invite_token = Column(String, nullable=True)
     invite_expires_at = Column(DateTime, nullable=True)
     invited_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -129,7 +129,7 @@ class Certificate(Base):
     module_id = Column(Integer, ForeignKey("modules.id"))
     file_url = Column(String)
     issued_at = Column(DateTime, default=datetime.datetime.utcnow)
-    expires_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
     
     user = relationship("User", back_populates="certificates")
     module = relationship("Module", back_populates="certificates")
@@ -203,8 +203,8 @@ class UserSchema(BaseModel):
     email: str
     role: str
     status: str
-    department: Optional[str] = None
-    team_id: Optional[int] = None
+    department: str
+    team_id: int
     invite_expires_at: Optional[datetime.datetime] = None
     invited_by_id: Optional[int] = None
     must_change_password: bool = False

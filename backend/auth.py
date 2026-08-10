@@ -1,17 +1,35 @@
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-import bcrypt
-from pydantic import BaseModel
+from passlib.context import CryptContext
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 import models
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
+from dotenv import load_dotenv
 
-# Security settings
-SECRET_KEY = "super-secret-key-change-this-in-production"
+load_dotenv()
+
+# Security settings — vêm do .env; a aplicação recusa subir sem SECRET_KEY
+# definida (nenhum fallback hardcoded é aceitável em produção).
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY não definida. Copie .env.example para .env e defina um valor forte antes de subir a aplicação."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
+
+# Domínios de e-mail corporativo permitidos, configurados no .env.
+ALLOWED_EMAIL_DOMAINS = [
+    d.strip().lower() for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "geobiogas.tech").split(",") if d.strip()
+]
+
+def is_allowed_email_domain(email: str) -> bool:
+    domain = (email or "").lower().rsplit("@", 1)[-1]
+    return domain in ALLOWED_EMAIL_DOMAINS
 
 class Token(BaseModel):
     access_token: str
@@ -24,18 +42,31 @@ class UserCreate(BaseModel):
     username: str
     email: str
     password: str
-    department: Optional[str] = None
+    department: str
     invite_token: Optional[str] = None  # ← token de convite opcional no cadastro
+
+    @field_validator("department")
+    @classmethod
+    def department_not_blank(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Departamento é obrigatório.")
+        return v.strip()
 
 class LoginRequest(BaseModel):
     username: str
     password: str
 
+# argon2id é o algoritmo ativo para toda senha nova; bcrypt fica só como
+# leitor de hashes legados já gravados no banco — nenhuma senha nova é
+# gerada com ele. No login, hashes legados são re-hasheados para argon2id
+# automaticamente (ver login_for_access_token).
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+
 def get_password_hash(password):
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    return pwd_context.hash(password)
 
 def verify_password(plain_password, hashed_password):
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    return pwd_context.verify(plain_password, hashed_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -47,8 +78,18 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+def get_default_team(db: Session) -> models.Team:
+    """Time usado para usuários que ainda não têm equipe atribuída (Time é obrigatório em User)."""
+    team = db.query(models.Team).filter(models.Team.name == "Sem Equipe").first()
+    if not team:
+        team = models.Team(name="Sem Equipe", description="Time padrão para usuários sem equipe atribuída")
+        db.add(team)
+        db.commit()
+        db.refresh(team)
+    return team
+
 def register_user(db: Session, user: UserCreate):
-    if not user.email.endswith("@geobiogas.tech"):
+    if not is_allowed_email_domain(user.email):
         return {"error": "Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma."}
 
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
@@ -85,6 +126,7 @@ def register_user(db: Session, user: UserCreate):
         email=user.email,
         hashed_password=hashed_password,
         department=user.department,
+        team_id=get_default_team(db).id,  # cadastro público não escolhe time; admin/liderança reatribuem depois
         role="colaborador",
         status="pending"  # ← nunca "ativo" sem aprovação
     )
@@ -100,6 +142,12 @@ def login_for_access_token(db: Session, form_data: LoginRequest):
 
     if user.status not in ["ativo", "approved"]:
         return {"error": "Cadastro pendente de aprovação ou convite não aceito."}
+
+    # Upgrade transparente: se a senha ainda está em bcrypt (hash legado),
+    # re-hasheia para argon2id agora que sabemos que a senha em texto puro está correta.
+    if pwd_context.needs_update(user.hashed_password):
+        user.hashed_password = get_password_hash(form_data.password)
+        db.commit()
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(

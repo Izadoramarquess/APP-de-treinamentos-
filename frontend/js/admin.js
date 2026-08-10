@@ -48,6 +48,7 @@ Object.assign(App, {
             <form id="invite-user-form">
                 <div class="form-group"><label>Nome de usuário</label><input type="text" id="iu-user" class="form-control" required></div>
                 <div class="form-group"><label>E-mail corporativo</label><input type="email" id="iu-email" class="form-control" required></div>
+                <div class="form-group"><label>Departamento</label><input type="text" id="iu-dept" class="form-control" required></div>
                 <div class="form-group"><label>Cargo</label>
                     <select id="iu-role" class="form-control">
                         <option value="colaborador">Colaborador</option>
@@ -57,7 +58,7 @@ Object.assign(App, {
                 </div>
                 <div class="form-group"><label>Equipe</label>
                     <select id="iu-team" class="form-control">
-                        <option value="">Nenhuma</option>
+                        <option value="">Sem Equipe (padrão)</option>
                         ${teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
                     </select>
                 </div>
@@ -72,6 +73,7 @@ Object.assign(App, {
             const fd=new FormData();
             fd.append('username',document.getElementById('iu-user').value);
             fd.append('email',document.getElementById('iu-email').value);
+            fd.append('department',document.getElementById('iu-dept').value);
             fd.append('role',document.getElementById('iu-role').value);
             const tid=document.getElementById('iu-team').value; if(tid) fd.append('team_id',tid);
             const res=await fetch('/admin/users/invite',{method:'POST',headers:this.apiHeaders(),body:fd});
@@ -97,7 +99,7 @@ Object.assign(App, {
                 </div>
                 <div class="form-group"><label>Equipe</label>
                     <select id="e-team" class="form-control">
-                        <option value="">Nenhuma</option>
+                        <option value="">Sem Equipe (padrão)</option>
                         ${teams.map(t=>`<option value="${t.id}" ${currentTeam===t.id?'selected':''}>${t.name}</option>`).join('')}
                     </select>
                 </div>
@@ -146,7 +148,7 @@ Object.assign(App, {
         const tbody=document.querySelector('#inv-table tbody'); tbody.innerHTML='';
         if(!invites.length){tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📬</div><p>Nenhum convite encontrado.</p></div></td></tr>';return;}
         invites.forEach(i=>{
-            const expira=i.invite_date?new Date(new Date(i.invite_date).getTime()+7*24*60*60*1000).toLocaleDateString('pt-BR'):'—';
+            const expira=i.invite_date?new Date(new Date(i.invite_date).getTime()+7*24*60*60*1000).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
             tbody.innerHTML+=`<tr>
                 <td><strong>${i.username}</strong><br><small style="color:var(--text-dim)">${i.email}</small></td>
                 <td>${this.statusBadge(i.status)}</td>

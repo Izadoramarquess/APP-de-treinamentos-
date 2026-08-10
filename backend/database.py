@@ -85,6 +85,53 @@ def init_db():
             except Exception as e:
                 print(f"Warning while adding reset password columns: {e}")
 
+    # Departamento e Time passaram a ser obrigatórios (NOT NULL) em User, e
+    # expires_at obrigatório em Certificate. Para bancos já existentes, isso
+    # precisa de: (a) um time padrão para acolher usuários sem time, (b) um
+    # backfill dos valores nulos, e (c) — só em Postgres, já que SQLite não
+    # suporta ALTER COLUMN ... SET NOT NULL sem recriar a tabela — a
+    # constraint física. Em bancos novos, create_all() abaixo já cria as
+    # colunas como NOT NULL diretamente, então nada disto se aplica.
+    if "teams" in inspector.get_table_names() and "users" in inspector.get_table_names():
+        with engine.connect() as conn:
+            default_team_id = conn.execute(text("SELECT id FROM teams WHERE name = 'Sem Equipe'")).scalar()
+            if default_team_id is None:
+                conn.execute(text("INSERT INTO teams (name, description) VALUES ('Sem Equipe', 'Time padrão para usuários sem equipe atribuída')"))
+                conn.commit()
+                default_team_id = conn.execute(text("SELECT id FROM teams WHERE name = 'Sem Equipe'")).scalar()
+
+            conn.execute(text("UPDATE users SET team_id = :tid WHERE team_id IS NULL"), {"tid": default_team_id})
+            conn.execute(text("UPDATE users SET department = 'Não informado' WHERE department IS NULL OR department = ''"))
+            conn.commit()
+
+            if engine.dialect.name == "postgresql":
+                try:
+                    conn.execute(text("ALTER TABLE users ALTER COLUMN department SET NOT NULL"))
+                    conn.execute(text("ALTER TABLE users ALTER COLUMN team_id SET NOT NULL"))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Warning while enforcing NOT NULL on users columns: {e}")
+
+    if "certificates" in inspector.get_table_names():
+        with engine.connect() as conn:
+            null_certs = conn.execute(text("SELECT id, issued_at FROM certificates WHERE expires_at IS NULL")).fetchall()
+            if null_certs:
+                from dateutil.relativedelta import relativedelta
+                default_months = int(os.getenv("CERT_DEFAULT_VALIDITY_MONTHS", "12"))
+                for cert_id, issued_at in null_certs:
+                    if isinstance(issued_at, str):
+                        issued_at = datetime.datetime.fromisoformat(issued_at)
+                    base = issued_at or datetime.datetime.utcnow()
+                    conn.execute(text("UPDATE certificates SET expires_at = :exp WHERE id = :id"), {"exp": base + relativedelta(months=default_months), "id": cert_id})
+                conn.commit()
+
+            if engine.dialect.name == "postgresql":
+                try:
+                    conn.execute(text("ALTER TABLE certificates ALTER COLUMN expires_at SET NOT NULL"))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Warning while enforcing NOT NULL on certificates.expires_at: {e}")
+
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
     
@@ -130,6 +177,15 @@ def init_db():
 
     db = SessionLocal()
     try:
+        # Time padrão para usuários sem equipe atribuída (department/team_id
+        # são obrigatórios em User desde já)
+        default_team = db.query(models.Team).filter(models.Team.name == "Sem Equipe").first()
+        if not default_team:
+            default_team = models.Team(name="Sem Equipe", description="Time padrão para usuários sem equipe atribuída")
+            db.add(default_team)
+            db.commit()
+            db.refresh(default_team)
+
         # Seed Teams
         team_alpha = db.query(models.Team).filter(models.Team.name == "Alpha").first()
         if not team_alpha:
@@ -147,7 +203,9 @@ def init_db():
                 email="admin@geotrilha.com.br",
                 hashed_password=hashed_password,
                 role="admin",
-                status="approved"
+                status="approved",
+                department="Administração",
+                team_id=default_team.id
             )
             db.add(admin_user)
 
@@ -161,6 +219,7 @@ def init_db():
                 hashed_password=hashed_password,
                 role="lideranca",
                 status="approved",
+                department="Operações",
                 team_id=team_alpha.id
             )
             db.add(lider_user)

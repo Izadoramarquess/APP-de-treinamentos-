@@ -24,6 +24,18 @@ UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(os.path.join(UPLOADS_DIR, "temp"), exist_ok=True)
 
+# Department é obrigatório em User; usado quando um fluxo de criação
+# (convite do admin, adição pela liderança) não coleta esse dado.
+DEFAULT_DEPARTMENT = "Não informado"
+
+def iso_utc(dt: Optional[datetime.datetime]) -> Optional[str]:
+    """Serializa um datetime ingênuo (armazenado em UTC) com o sufixo 'Z',
+    para que o JavaScript do frontend interprete corretamente como UTC em
+    vez de horário local do navegador."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=datetime.timezone.utc).isoformat()
+
 
 from contextlib import asynccontextmanager
 
@@ -285,14 +297,13 @@ def issue_certificate(
         models.Certificate.user_id == current_user.id
     ).first()
     if existing:
-        return {"message": "Certificado j emitido.", "certificate_id": existing.id, "issued_at": existing.issued_at}
+        return {"message": "Certificado j emitido.", "certificate_id": existing.id, "issued_at": iso_utc(existing.issued_at), "expires_at": iso_utc(existing.expires_at)}
 
-    # Calcular data de expirao se houver validade
+    # Certificado sempre tem validade: usa a do módulo, ou um padrão configurável se o módulo não definir uma.
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
-    expires_at = None
-    if module and module.validity_months:
-        from dateutil.relativedelta import relativedelta
-        expires_at = datetime.datetime.utcnow() + relativedelta(months=module.validity_months)
+    from dateutil.relativedelta import relativedelta
+    months = (module.validity_months if module and module.validity_months else None) or int(os.getenv("CERT_DEFAULT_VALIDITY_MONTHS", "12"))
+    expires_at = datetime.datetime.utcnow() + relativedelta(months=months)
 
     cert = models.Certificate(
         user_id=current_user.id,
@@ -303,7 +314,7 @@ def issue_certificate(
     db.add(cert)
     db.commit()
     db.refresh(cert)
-    return {"message": "Certificado emitido!", "certificate_id": cert.id, "issued_at": cert.issued_at, "expires_at": cert.expires_at}
+    return {"message": "Certificado emitido!", "certificate_id": cert.id, "issued_at": iso_utc(cert.issued_at), "expires_at": iso_utc(cert.expires_at)}
 
 @app.get("/my-certificates")
 def get_my_certificates(
@@ -320,8 +331,8 @@ def get_my_certificates(
             "certificate_id": c.id,
             "module_id": c.module_id,
             "module_title": module.title if module else "—",
-            "issued_at": c.issued_at,
-            "expires_at": c.expires_at,
+            "issued_at": iso_utc(c.issued_at),
+            "expires_at": iso_utc(c.expires_at),
             "file_url": c.file_url
         })
     return result
@@ -341,11 +352,12 @@ def update_user_status(user_id: int, new_status: str = Form(None), role: str = F
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if role == "admin" and not user.email.endswith("@geobiogas.tech"):
+    if role == "admin" and not auth.is_allowed_email_domain(user.email):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
     if new_status: user.status = new_status
     if role: user.role = role
-    if team_id is not None: user.team_id = team_id if team_id != 0 else None
+    # Time é obrigatório: 0/ausência de escolha vai para o time padrão, nunca para nulo.
+    if team_id is not None: user.team_id = team_id if team_id != 0 else auth.get_default_team(db).id
     db.commit()
     return {"message": "User updated"}
 
@@ -354,7 +366,7 @@ def update_user_role(user_id: int, role: str = Form(...), db: Session = Depends(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if role == "admin" and not user.email.endswith("@geobiogas.tech"):
+    if role == "admin" and not auth.is_allowed_email_domain(user.email):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
     user.role = role
     db.commit()
@@ -409,6 +421,7 @@ def invite_user_admin(
     username: str = Form(...),
     email: str = Form(...),
     role: str = Form("usuario"),
+    department: Optional[str] = Form(None),
     team_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
@@ -416,8 +429,8 @@ def invite_user_admin(
     if current_user.role == "lideranca":
         team_id = current_user.team_id
         role = "usuario"
-    
-    if role == "admin" and not email.endswith("@geobiogas.tech"):
+
+    if role == "admin" and not auth.is_allowed_email_domain(email):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
 
     existing_user = db.query(models.User).filter(models.User.email == email).first()
@@ -425,14 +438,15 @@ def invite_user_admin(
         raise HTTPException(status_code=400, detail="E-mail já cadastrado no sistema.")
 
     invite_token = secrets.token_urlsafe(32)
-    
+
     from auth import get_password_hash
     db_user = models.User(
         username=username,
         email=email,
         hashed_password=get_password_hash(uuid.uuid4().hex),
         role=role,
-        team_id=team_id,
+        department=(department or "").strip() or DEFAULT_DEPARTMENT,
+        team_id=team_id if team_id else auth.get_default_team(db).id,
         status="convite_pendente",
         invite_token=invite_token,
         invite_expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=7),
@@ -476,7 +490,7 @@ def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: mod
     if current_user.role == "lideranca" and user.team_id != current_user.team_id:
         raise HTTPException(status_code=403, detail="Você só pode reenviar convites para membros da sua própria equipe.")
         
-    if not user.email.endswith("@geobiogas.tech"): raise HTTPException(status_code=400, detail="Domínio inválido.")
+    if not auth.is_allowed_email_domain(user.email): raise HTTPException(status_code=400, detail="Domínio inválido.")
     
     invite_token = secrets.token_urlsafe(32)
     user.invite_token = invite_token
@@ -511,7 +525,7 @@ def activate_manual(user_id: int, db: Session = Depends(get_db), current_user: m
 def remove_team(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user: raise HTTPException(status_code=404)
-    user.team_id = None
+    user.team_id = auth.get_default_team(db).id  # Time é obrigatório: volta para o time padrão em vez de nulo.
     if user.role == "lideranca": user.role = "usuario"
     db.commit()
     return {"message": "Removido"}
@@ -554,8 +568,8 @@ def list_invites(db: Session = Depends(get_db), current_user: models.User = Depe
             "status": u.status,
             "team_id": u.team_id,
             "invited_by": inviter,
-            "invite_date": (u.invite_expires_at - datetime.timedelta(days=7)).isoformat() if u.invite_expires_at else None,
-            "last_email_date": last_log.sent_at.isoformat() if last_log else None,
+            "invite_date": iso_utc(u.invite_expires_at - datetime.timedelta(days=7)) if u.invite_expires_at else None,
+            "last_email_date": iso_utc(last_log.sent_at) if last_log else None,
             "last_email_status": last_log.status if last_log else None
         })
     return out
@@ -802,7 +816,7 @@ def list_teams(db: Session = Depends(get_db), current_user: models.User = Depend
 
 @app.post("/teams", response_model=models.TeamSchema)
 def create_team(name: str = Form(...), description: str = Form(""), emails: str = Form(""), team_admin_email: str = Form(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    if not team_admin_email.endswith("@geobiogas.tech"):
+    if not auth.is_allowed_email_domain(team_admin_email):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
 
     team = models.Team(name=name, description=description)
@@ -813,7 +827,7 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
     team_members_ids = []
 
     def dispatch_team_member(email_addr, is_admin):
-        if not email_addr.endswith("@geobiogas.tech"):
+        if not auth.is_allowed_email_domain(email_addr):
             raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
         user = db.query(models.User).filter(models.User.email == email_addr).first()
         if user:
@@ -832,6 +846,7 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
                 hashed_password=get_password_hash(random_pass),
                 role="lideranca" if is_admin else "usuario",
                 status="convite_pendente",
+                department=DEFAULT_DEPARTMENT,
                 team_id=team.id,
                 invite_token=invite_t,
                 invite_expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=7),
