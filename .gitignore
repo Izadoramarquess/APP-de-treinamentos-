@@ -38,5 +38,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code — estado local de permissões, específico da máquina/sessão
+.claude/settings.local.json
+
 backend/test_output.md
 backend/test_api.log
