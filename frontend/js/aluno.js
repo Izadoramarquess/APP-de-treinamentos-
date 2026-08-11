@@ -1,87 +1,44 @@
 /* ════════════════════════════════════════
-   VISÃO ALUNO — trilhas, cursos, módulos, player, quiz, certificados
+   VISÃO ALUNO — cursos, módulos, player, quiz, certificados
 ════════════════════════════════════════ */
 Object.assign(App, {
-    async renderStudentPaths() {
-        this._resetContainerStyles(); this.currentPath=null; this.currentCourse=null;
+    async renderStudentCourses() {
+        this._resetContainerStyles(); this.currentCourse=null;
         const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({title:'Minhas Trilhas',backLabel:'Início',backFn:'App.renderStudentDashboard()'})+
-            `<div class="grid" id="student-paths"><div class="loader">Carregando</div></div>`;
-        // Usa /my-paths — só trilhas matriculadas
-        const res=await fetch('/my-paths',{headers:this.apiHeaders()});
-        const paths=res.ok?await res.json():[];
-        const grid=document.getElementById('student-paths'); grid.innerHTML='';
-        if(!paths.length){
+        container.innerHTML=this.sectionHeader({title:'Meus Cursos',backLabel:'Início',backFn:'App.renderStudentDashboard()'})+
+            `<div class="grid" id="student-courses"><div class="loader">Carregando</div></div>`;
+        const res=await fetch('/my-courses',{headers:this.apiHeaders()});
+        const courses=res.ok?await res.json():[];
+        const grid=document.getElementById('student-courses'); grid.innerHTML='';
+        if(!courses.length){
             grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1">
                 <div class="empty-icon">📚</div>
-                <p>Você não está matriculado em nenhuma trilha.</p>
+                <p>Você não está matriculado em nenhum curso.</p>
                 <p style="font-size:0.85rem;margin-top:0.5rem">Entre em contato com seu líder ou administrador.</p>
             </div>`;
             return;
         }
-        // Busca o progresso de todas as trilhas em paralelo em vez de uma de cada vez.
-        const pcts = await Promise.all(paths.map(async p => {
-            try{const pr=await fetch(`/paths/${p.id}/progress`,{headers:this.apiHeaders()});if(pr.ok){const d=await pr.json();return d.percent||0;}}catch(e){}
-            return 0;
-        }));
-        grid.innerHTML = paths.map((p,i) => {
-            const pct=pcts[i];
-            const fillColor=pct===100?'#22c55e':'var(--primary-light)';
-            return `<div class="path-card">
-                <div class="path-icon">📚</div>
-                <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${p.title}</h3>
-                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 0.75rem;line-height:1.5">${p.description||''}</p>
-                <div style="margin-bottom:0.75rem">
-                    <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-dim);margin-bottom:0.3rem">
-                        <span>Progresso</span><span style="font-weight:700;color:${fillColor}">${pct}%</span>
-                    </div>
-                    <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
-                </div>
-                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')">
-                    ${pct===100?'✓ Concluída':'Acessar →'}
-                </button>
-            </div>`;
-        }).join('');
-    },
-
-    async showStudentCourses(pathId, pathTitle) {
-        this._resetContainerStyles(); this.currentPath={id:pathId,title:pathTitle};
-        const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({
-            title:pathTitle,
-            backLabel:'Trilhas',backFn:'App.renderStudentPaths()',
-            breadcrumbs:[{label:'Início',fn:'App.renderStudentDashboard()'},{label:'Trilhas',fn:'App.renderStudentPaths()'},{label:pathTitle}]
-        })+`<div class="grid" id="student-courses"><div class="loader">Carregando</div></div>`;
-        const res=await fetch(`/paths/${pathId}/courses`,{headers:this.apiHeaders()}); const courses=await res.json();
-        const grid=document.getElementById('student-courses'); grid.innerHTML='';
-        if(!courses.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso disponível.</p></div>';return;}
-        // Buscar módulos + progresso de todos os cursos em paralelo em vez de um de cada vez.
-        const courseData = await Promise.all(courses.map(async c => {
-            let done=0, total=0;
-            try{
-                const modRes=await fetch(`/courses/${c.id}/modules`,{headers:this.apiHeaders()});
-                const mods=modRes.ok?await modRes.json():[];
-                total=mods.length;
-                const pr=await fetch(`/courses/${c.id}/progress`,{headers:this.apiHeaders()});
-                if(pr.ok){const d=await pr.json();done=d.filter(x=>x.completed).length;}
-            }catch(e){}
-            return {done, total};
+        // Busca o progresso de todos os cursos em paralelo em vez de um de cada vez.
+        const summaries = await Promise.all(courses.map(async c => {
+            try{const pr=await fetch(`/courses/${c.id}/progress-summary`,{headers:this.apiHeaders()});if(pr.ok)return await pr.json();}catch(e){}
+            return {total:0, completed:0, percent:0};
         }));
         grid.innerHTML = courses.map((c,i) => {
-            const {done,total}=courseData[i];
-            const pct=total>0?Math.round((done/total)*100):0;
-            const fillColor=pct===100?'#22c55e':'var(--primary-light)';
+            const {completed,total,percent}=summaries[i];
+            const fillColor=percent===100?'#22c55e':'var(--primary-light)';
             return `<div class="path-card">
                 <div class="path-icon" style="background:linear-gradient(135deg,#1e40af,#3b82f6)">🎓</div>
-                <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.order?c.order+'. ':''}${c.title}</h3>
+                <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.title}</h3>
                 <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 0.75rem;line-height:1.5">${c.description||''}</p>
                 <div style="margin-bottom:0.75rem">
                     <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-dim);margin-bottom:0.3rem">
-                        <span>${done} de ${total} módulos</span><span style="font-weight:700;color:${fillColor}">${pct}%</span>
+                        <span>${completed} de ${total} módulos</span><span style="font-weight:700;color:${fillColor}">${percent}%</span>
                     </div>
-                    <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+                    <div class="progress-track"><div class="progress-fill" style="width:${percent}%;background:${fillColor}"></div></div>
                 </div>
-                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentModules(${c.id},'${c.title.replace(/'/g,"\\'")}')">Ver módulos →</button>
+                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentModules(${c.id},'${c.title.replace(/'/g,"\\'")}')">
+                    ${percent===100?'✓ Concluído':'Acessar →'}
+                </button>
             </div>`;
         }).join('');
     },
@@ -91,11 +48,10 @@ Object.assign(App, {
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({
             title:courseTitle,
-            backLabel:this.currentPath.title,backFn:`App.showStudentCourses(${this.currentPath.id},'${this.currentPath.title.replace(/'/g,"\\'")}')`,
+            backLabel:'Meus Cursos',backFn:'App.renderStudentCourses()',
             breadcrumbs:[
                 {label:'Início',fn:'App.renderStudentDashboard()'},
-                {label:'Trilhas',fn:'App.renderStudentPaths()'},
-                {label:this.currentPath.title,fn:`App.showStudentCourses(${this.currentPath.id},'${this.currentPath.title.replace(/'/g,"\\'")}')` },
+                {label:'Meus Cursos',fn:'App.renderStudentCourses()'},
                 {label:courseTitle}
             ]
         })+`<div id="student-modules"><div class="loader">Carregando</div></div>`;
@@ -183,19 +139,23 @@ Object.assign(App, {
         if(finalQuizzes.length>0) document.getElementById('btn-final-exam').onclick=()=>this.startFinalExam(finalQuizzes, moduleId);
     },
 
-    // Emite o certificado — a correção/aprovação já aconteceu no servidor
-    // (via /modules/{id}/exam-submit ou, para módulo sem prova, via /complete).
-    async _issueCertificate(moduleId) {
-        try{ await fetch(`/modules/${moduleId}/certificate`,{method:'POST',headers:this.apiHeaders()}); }
-        catch(e){ console.error('Erro ao emitir certificado:', e); }
-    },
-
-    // Módulo sem prova final: só "assistiu o vídeo" — sem nota a apurar.
+    // Módulo sem prova final: só "assistiu o vídeo" — sem nota a apurar. A
+    // emissão do certificado é automática no backend quando o curso inteiro
+    // é concluído — aqui só avisamos o aluno se foi esse o caso.
     async markModuleComplete(moduleId) {
         try{
-            await fetch(`/modules/${moduleId}/complete`,{method:'POST',headers:this.apiHeaders()});
-            await this._issueCertificate(moduleId);
+            const res=await fetch(`/modules/${moduleId}/complete`,{method:'POST',headers:this.apiHeaders()});
+            const data=res.ok?await res.json():{};
+            if(data.certificate_issued) this._showCertificateToast();
         }catch(e){ console.error('Erro ao registrar progresso:', e); }
+    },
+
+    _showCertificateToast() {
+        const el=document.createElement('div');
+        el.textContent='🎉 Certificado emitido! Confira em "Meus Certificados".';
+        el.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#16a34a;color:white;padding:0.8rem 1.4rem;border-radius:10px;font-size:0.88rem;font-weight:600;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.25)';
+        document.body.appendChild(el);
+        setTimeout(()=>el.remove(),4000);
     },
 
     // A resposta certa nunca vem do servidor para o aluno — cada clique é
@@ -267,12 +227,12 @@ Object.assign(App, {
         };
         const finish=async ()=>{
             body.innerHTML=`<div style="text-align:center;padding:2.5rem 0"><div class="loader">Corrigindo prova</div></div>`;
-            let result={score:0,passed:false,correct_count:0,total:questions.length};
+            let result={score:0,passed:false,correct_count:0,total:questions.length,certificate_issued:false};
             try{
                 const res=await fetch(`/modules/${moduleId}/exam-submit`,{method:'POST',headers:this.apiJsonHeaders(),body:JSON.stringify(answers)});
                 if(res.ok) result=await res.json();
             }catch(e){}
-            if(result.passed) await this._issueCertificate(moduleId);
+            if(result.certificate_issued) this._showCertificateToast();
             showResult(result);
         };
         const showResult=({score,passed,correct_count,total})=>{
@@ -302,8 +262,8 @@ Object.assign(App, {
             wrapper.innerHTML=`<div class="empty-state">
                 <div class="empty-icon">🏆</div>
                 <p>Você ainda não possui certificados.</p>
-                <p style="font-size:0.85rem;margin-top:0.5rem">Conclua módulos para ganhar certificados!</p>
-                <button class="btn btn-primary" style="margin-top:1rem" onclick="App.renderStudentPaths()">Ver Trilhas →</button>
+                <p style="font-size:0.85rem;margin-top:0.5rem">Conclua todos os módulos de um curso para ganhar o certificado!</p>
+                <button class="btn btn-primary" style="margin-top:1rem" onclick="App.renderStudentCourses()">Ver Cursos →</button>
             </div>`;
             return;
         }
@@ -314,7 +274,7 @@ Object.assign(App, {
             return `<div class="card" style="display:flex;flex-direction:column;gap:0.75rem">
                 <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#fbbf24);display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏆</div>
                 <div>
-                    <h3 style="margin:0 0 0.25rem;font-size:1rem;color:var(--primary)">${c.module_title}</h3>
+                    <h3 style="margin:0 0 0.25rem;font-size:1rem;color:var(--primary)">${c.course_title}</h3>
                     <p style="font-size:0.82rem;color:var(--text-dim);margin:0">Emitido em ${issued}</p>
                     <p style="font-size:0.78rem;margin:0.2rem 0 0;color:${expired?'#ef4444':'var(--text-dim)'}">
                         ${expired?'⚠️ Expirado em':'Válido até'} ${expires}

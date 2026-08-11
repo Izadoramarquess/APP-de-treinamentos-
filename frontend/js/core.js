@@ -6,7 +6,6 @@ console.log("GeoTrilha LMS carregado.");
 ════════════════════════════════════════ */
 const App = {
     user: null,
-    currentPath: null,
     currentCourse: null,
 
     init() {
@@ -118,16 +117,16 @@ const App = {
                 <a class="nav-link" onclick="App.renderAdminUsers()">Usuários</a>
                 <a class="nav-link" onclick="App.renderAdminInvites()">Convites</a>
                 <a class="nav-link" onclick="App.renderAdminTeams()">Equipes</a>
-                <a class="nav-link" onclick="App.renderAdminPaths()">Trilhas & Cursos</a>`;
+                <a class="nav-link" onclick="App.renderAdminCourses()">Cursos</a>`;
         } else if (role === 'lideranca') {
             navHtml = `
                 <a class="nav-link" onclick="App.renderLeaderDashboard()">Minha Equipe</a>
-                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>
+                <a class="nav-link" onclick="App.renderStudentCourses()">Meus Cursos</a>
                 <a class="nav-link" onclick="App.renderStudentCertificates()">🏆 Certificados</a>`;
         } else {
             navHtml = `
                 <a class="nav-link" onclick="App.renderStudentDashboard()">Início</a>
-                <a class="nav-link" onclick="App.renderStudentPaths()">Minhas Trilhas</a>
+                <a class="nav-link" onclick="App.renderStudentCourses()">Meus Cursos</a>
                 <a class="nav-link" onclick="App.renderStudentCertificates()">🏆 Certificados</a>`;
         }
         nav.innerHTML = navHtml;

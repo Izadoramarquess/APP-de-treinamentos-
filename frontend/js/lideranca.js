@@ -31,14 +31,14 @@ Object.assign(App, {
         modal.classList.remove('hidden');
     },
 
-    async showAssignPathModal(userId, username) {
+    async showAssignCourseModal(userId, username) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
-        const pathsRes=await fetch('/paths',{headers:this.apiHeaders()}); const paths=await pathsRes.json();
+        const coursesRes=await fetch('/courses',{headers:this.apiHeaders()}); const courses=await coursesRes.json();
         body.className='';
-        body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Atribuir Trilha — ${username}</h3>
+        body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Atribuir Curso — ${username}</h3>
             <form id="assign-form">
-                <div class="form-group"><label>Trilha</label>
-                    <select id="a-path" class="form-control">${paths.map(p=>`<option value="${p.id}">${p.title}</option>`).join('')}</select>
+                <div class="form-group"><label>Curso</label>
+                    <select id="a-course" class="form-control">${courses.map(c=>`<option value="${c.id}">${c.title}</option>`).join('')}</select>
                 </div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">Atribuir</button>
@@ -49,17 +49,17 @@ Object.assign(App, {
             e.preventDefault();
             const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Atribuindo...';
             const fd=new FormData();
-            fd.append('user_id',userId); fd.append('path_id',document.getElementById('a-path').value);
+            fd.append('user_id',userId); fd.append('course_id',document.getElementById('a-course').value);
             const res=await fetch('/enrollments',{method:'POST',headers:this.apiHeaders(),body:fd});
             if(res.ok){
                 this.closeModal();
-                alert('Trilha atribuída com sucesso!');
+                alert('Curso atribuído com sucesso!');
                 // Recarregar a visão atual
                 if(this.user.role==='lideranca') this.renderLeaderDashboard();
                 else this.renderAdminUsers();
             } else {
                 const d=await res.json();
-                alert(d.detail||'Erro ao atribuir trilha.');
+                alert(d.detail||'Erro ao atribuir curso.');
                 btn.disabled=false; btn.textContent='Atribuir';
             }
         };

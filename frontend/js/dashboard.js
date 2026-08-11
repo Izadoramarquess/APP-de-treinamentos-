@@ -8,7 +8,7 @@ Object.assign(App, {
         container.innerHTML=this.sectionHeader({title:'Dashboard'})+`
             <div class="grid-stats" id="stats-grid">
                 <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="s-users">—</div><div class="stat-label">Usuários Ativos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="s-paths">—</div><div class="stat-label">Trilhas</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="s-courses">—</div><div class="stat-label">Cursos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="s-modules">—</div><div class="stat-label">Módulos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="s-completions">—</div><div class="stat-label">Conclusões</div></div></div>
                 <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="s-pending">—</div><div class="stat-label">Aprovações Pendentes</div></div></div>
@@ -35,7 +35,7 @@ Object.assign(App, {
             const users = await usersRes.json();
 
             document.getElementById('s-users').textContent      = stats.total_users      ?? '—';
-            document.getElementById('s-paths').textContent      = stats.total_paths      ?? '—';
+            document.getElementById('s-courses').textContent    = stats.total_courses    ?? '—';
             document.getElementById('s-modules').textContent    = stats.total_modules    ?? '—';
             document.getElementById('s-completions').textContent= stats.completions      ?? '0';
             document.getElementById('s-pending').textContent    = stats.pending_users    ?? '0';
@@ -115,7 +115,7 @@ Object.assign(App, {
                             <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
                         </div>
                     </td>
-                    <td>${this.actionBtn('🎯 Atribuir Trilha',`App.showAssignPathModal(${u.user_id},'${u.username}')`)}</td>
+                    <td>${this.actionBtn('🎯 Atribuir Curso',`App.showAssignCourseModal(${u.user_id},'${u.username}')`)}</td>
                 </tr>`;
             });
         } catch(e) { console.error('Erro ao carregar equipe:', e); }
@@ -126,32 +126,31 @@ Object.assign(App, {
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:`Olá, ${this.user.username}! 👋`})+`
             <div class="grid-stats">
-                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="sd-paths">—</div><div class="stat-label">Trilhas Matriculadas</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="sd-courses">—</div><div class="stat-label">Cursos Matriculados</div></div></div>
                 <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="sd-modules">—</div><div class="stat-label">Total de Módulos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="sd-done">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">🏆</div><div class="stat-info"><div class="stat-value" id="sd-certs">—</div><div class="stat-label">Certificados</div></div></div>
             </div>
-            <h3 style="margin-bottom:1rem;color:var(--primary);font-size:1.1rem">Minhas Trilhas</h3>
-            <div class="grid" id="dash-paths"><div class="loader">Carregando</div></div>`;
+            <h3 style="margin-bottom:1rem;color:var(--primary);font-size:1.1rem">Meus Cursos</h3>
+            <div class="grid" id="dash-courses"><div class="loader">Carregando</div></div>`;
 
-        // Usa /my-paths — só trilhas matriculadas
-        const [pathsRes, certsRes] = await Promise.all([
-            fetch('/my-paths', {headers:this.apiHeaders()}),
+        const [coursesRes, certsRes] = await Promise.all([
+            fetch('/my-courses', {headers:this.apiHeaders()}),
             fetch('/my-certificates', {headers:this.apiHeaders()})
         ]);
-        const paths = pathsRes.ok ? await pathsRes.json() : [];
+        const courses = coursesRes.ok ? await coursesRes.json() : [];
         const certs = certsRes.ok ? await certsRes.json() : [];
 
-        document.getElementById('sd-paths').textContent=paths.length;
+        document.getElementById('sd-courses').textContent=courses.length;
         document.getElementById('sd-certs').textContent=certs.length;
 
         let totalModules=0, totalDone=0;
-        const grid=document.getElementById('dash-paths'); grid.innerHTML='';
+        const grid=document.getElementById('dash-courses'); grid.innerHTML='';
 
-        if(!paths.length){
+        if(!courses.length){
             grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1">
                 <div class="empty-icon">📚</div>
-                <p>Você ainda não está matriculado em nenhuma trilha.</p>
+                <p>Você ainda não está matriculado em nenhum curso.</p>
                 <p style="font-size:0.85rem;margin-top:0.5rem">Entre em contato com seu líder ou administrador.</p>
             </div>`;
             document.getElementById('sd-modules').textContent='0';
@@ -159,15 +158,15 @@ Object.assign(App, {
             return;
         }
 
-        // Busca o progresso de todas as trilhas em paralelo em vez de uma de cada vez.
-        const progDataList = await Promise.all(paths.map(async p => {
+        // Busca o progresso de todos os cursos em paralelo em vez de um de cada vez.
+        const progDataList = await Promise.all(courses.map(async c => {
             try{
-                const pRes=await fetch(`/paths/${p.id}/progress`,{headers:this.apiHeaders()});
+                const pRes=await fetch(`/courses/${c.id}/progress-summary`,{headers:this.apiHeaders()});
                 if(pRes.ok) return await pRes.json();
             }catch(e){}
             return {total:0,completed:0,percent:0};
         }));
-        grid.innerHTML = paths.map((p,i) => {
+        grid.innerHTML = courses.map((c,i) => {
             const progData=progDataList[i];
             totalModules+=progData.total;
             totalDone+=progData.completed;
@@ -175,8 +174,8 @@ Object.assign(App, {
             const fillColor=pct===100?'#22c55e':'var(--primary-light)';
             return `<div class="path-card">
                 <div class="path-icon">📚</div>
-                <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${p.title}</h3>
-                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1rem;line-height:1.5">${p.description||''}</p>
+                <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.title}</h3>
+                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1rem;line-height:1.5">${c.description||''}</p>
                 <div style="margin-bottom:0.75rem">
                     <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--text-dim);margin-bottom:0.3rem">
                         <span>${progData.completed} de ${progData.total} módulos</span>
@@ -184,8 +183,8 @@ Object.assign(App, {
                     </div>
                     <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
                 </div>
-                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')">
-                    ${pct===100?'✓ Concluída — Revisar':'Continuar →'}
+                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentModules(${c.id},'${c.title.replace(/'/g,"\\'")}')">
+                    ${pct===100?'✓ Concluído — Revisar':'Continuar →'}
                 </button>
             </div>`;
         }).join('');
