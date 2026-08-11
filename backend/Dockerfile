@@ -16,12 +16,19 @@ WORKDIR /app
 # libpq5 é a lib de runtime (não o toolkit de build) usada pelo psycopg2 em tempo de execução
 RUN apt-get update && apt-get install -y --no-install-recommends libpq5 && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /root/.local /root/.local
+# Usuário não-root (UID 1000). O diretório uploads é um bind mount no
+# docker-compose, então a permissão de escrita depende do dono da pasta no
+# HOST, não deste chown — veja a nota no DEPLOY.md sobre preparar
+# ./backend/uploads antes do primeiro `docker compose up`.
+RUN useradd --uid 1000 --create-home appuser
+
+COPY --from=builder /root/.local /home/appuser/.local
 COPY . .
 
-RUN mkdir -p uploads
+RUN mkdir -p uploads && chown -R appuser:appuser /app /home/appuser/.local
 
-ENV PATH=/root/.local/bin:$PATH
+ENV PATH=/home/appuser/.local/bin:$PATH
+USER appuser
 
 EXPOSE 8000
 

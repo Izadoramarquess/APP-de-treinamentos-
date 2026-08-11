@@ -1,7 +1,9 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, bindparam
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
+import secrets
+import datetime
 
 # Database Configuration
 # Default to SQLite for local development if DATABASE_URL is not set
@@ -148,18 +150,18 @@ def init_db():
             for path in paths:
                 # Find modules that belong to this path (using the now-removed path_id column if it still exists in DB)
                 # Since SQLAlchemy model for Module no longer has path_id, we use raw SQL to find them
-                result = db.execute(text(f"SELECT id FROM modules WHERE path_id = {path.id}"))
+                result = db.execute(text("SELECT id FROM modules WHERE path_id = :pid"), {"pid": path.id})
                 module_ids = [row[0] for row in result]
-                
+
                 if module_ids:
                     # Create a default course for this path
                     default_course = Course(path_id=path.id, title="Módulos Gerais", description="Módulos migrados da versão anterior", order=1)
                     db.add(default_course)
                     db.flush()
-                    
+
                     # Update modules to link to this course
-                    id_list = ','.join(map(str, module_ids))
-                    db.execute(text(f"UPDATE modules SET course_id = {default_course.id} WHERE id IN ({id_list})"))
+                    stmt = text("UPDATE modules SET course_id = :cid WHERE id IN :ids").bindparams(bindparam("ids", expanding=True))
+                    db.execute(stmt, {"cid": default_course.id, "ids": module_ids})
             
             # Remove the old path_id column from modules to clean up (SQLite doesn't support DROP COLUMN well before 3.35.0)
             # but we can leave it there as redundant for now.
@@ -194,10 +196,14 @@ def init_db():
             db.commit()
             db.refresh(team_alpha)
 
-        # Seed admin user
+        # Seed admin user — senha aleatória, nunca fixa no código. Impressa
+        # uma única vez no log de inicialização; o admin é forçado a trocá-la
+        # no primeiro login (mesmo fluxo de must_change_password já usado
+        # para reset de senha de outros usuários).
         admin_exists = db.query(models.User).filter(models.User.username == "admin").first()
         if not admin_exists:
-            hashed_password = get_password_hash("admin")
+            initial_password = secrets.token_urlsafe(12)
+            hashed_password = get_password_hash(initial_password)
             admin_user = models.User(
                 username="admin",
                 email="admin@geotrilha.com.br",
@@ -205,9 +211,15 @@ def init_db():
                 role="admin",
                 status="approved",
                 department="Administração",
-                team_id=default_team.id
+                team_id=default_team.id,
+                must_change_password=True
             )
             db.add(admin_user)
+            print("=" * 60)
+            print("USUÁRIO ADMIN CRIADO — copie a senha agora, ela não será mostrada de novo:")
+            print(f"  usuário: admin")
+            print(f"  senha:   {initial_password}")
+            print("=" * 60)
 
         # Seed lider user
         lider_exists = db.query(models.User).filter(models.User.username == "lider").first()

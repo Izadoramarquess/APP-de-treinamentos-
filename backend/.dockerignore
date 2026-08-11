@@ -1,0 +1,12 @@
+# Ferramentas de dev/teste — não devem ir para a imagem de produção.
+run_tests_api.py
+test_output.md
+
+# Estado local que nunca deve entrar na imagem.
+training_platform.db
+uploads/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env

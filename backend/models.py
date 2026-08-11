@@ -153,6 +153,9 @@ class MaterialSchema(BaseModel):
     file_url: str
     class Config: from_attributes = True
 
+# Schema completo, COM o gabarito — só para respostas admin-only (ex: ao
+# cadastrar uma pergunta). Nunca usar como response_model de algo que um
+# aluno possa chamar antes de responder.
 class QuestionSchema(BaseModel):
     id: int
     text: str
@@ -161,6 +164,19 @@ class QuestionSchema(BaseModel):
     option_c: str
     option_d: str
     correct_option: str
+    is_final_exam: bool
+    timestamp: Optional[float] = None
+    class Config: from_attributes = True
+
+# Schema público — sem correct_option. Usado em tudo que um aluno pode ver
+# antes de responder (embutido em ModuleSchema, e no GET de perguntas).
+class QuestionPublicSchema(BaseModel):
+    id: int
+    text: str
+    option_a: str
+    option_b: str
+    option_c: str
+    option_d: str
     is_final_exam: bool
     timestamp: Optional[float] = None
     class Config: from_attributes = True
@@ -176,7 +192,7 @@ class ModuleSchema(BaseModel):
     certificate_template_url: Optional[str] = None
     validity_months: Optional[int] = None
     materials: List[MaterialSchema] = []
-    questions: List[QuestionSchema] = []
+    questions: List[QuestionPublicSchema] = []
     class Config: from_attributes = True
 
 class CourseSchema(BaseModel):

@@ -159,17 +159,21 @@ Object.assign(App, {
             return;
         }
 
-        for(const p of paths){
-            let progData={total:0,completed:0,percent:0};
+        // Busca o progresso de todas as trilhas em paralelo em vez de uma de cada vez.
+        const progDataList = await Promise.all(paths.map(async p => {
             try{
                 const pRes=await fetch(`/paths/${p.id}/progress`,{headers:this.apiHeaders()});
-                if(pRes.ok) progData=await pRes.json();
+                if(pRes.ok) return await pRes.json();
             }catch(e){}
+            return {total:0,completed:0,percent:0};
+        }));
+        grid.innerHTML = paths.map((p,i) => {
+            const progData=progDataList[i];
             totalModules+=progData.total;
             totalDone+=progData.completed;
             const pct=progData.percent||0;
             const fillColor=pct===100?'#22c55e':'var(--primary-light)';
-            grid.innerHTML+=`<div class="path-card">
+            return `<div class="path-card">
                 <div class="path-icon">📚</div>
                 <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${p.title}</h3>
                 <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1rem;line-height:1.5">${p.description||''}</p>
@@ -184,7 +188,7 @@ Object.assign(App, {
                     ${pct===100?'✓ Concluída — Revisar':'Continuar →'}
                 </button>
             </div>`;
-        }
+        }).join('');
         document.getElementById('sd-modules').textContent=totalModules;
         document.getElementById('sd-done').textContent=totalDone;
     },

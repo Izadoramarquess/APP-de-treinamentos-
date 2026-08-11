@@ -1,0 +1,112 @@
+"""Dependências e helpers compartilhados entre os routers (backend/routers/*)."""
+import datetime
+import os
+import re
+import uuid
+from typing import List, Optional
+
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+
+import models
+import database
+import auth
+
+# ---------------- Sessão de banco ----------------
+def get_db():
+    db = database.SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# ---------------- Autenticação / autorização ----------------
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
+    try:
+        from jose import jwt
+        payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except Exception:
+        raise credentials_exception
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+def authorize(allowed_roles: List[str]):
+    def decorator(current_user: models.User = Depends(get_current_user)):
+        if current_user.role == "admin":
+            return current_user
+        if current_user.role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Você não tem permissão para realizar esta ação.")
+        return current_user
+    return decorator
+
+# ---------------- Constantes de domínio ----------------
+UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads"))
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+os.makedirs(os.path.join(UPLOADS_DIR, "temp"), exist_ok=True)
+
+# Department é obrigatório em User; usado quando um fluxo de criação
+# (convite do admin, adição pela liderança) não coleta esse dado.
+DEFAULT_DEPARTMENT = "Não informado"
+
+def iso_utc(dt: Optional[datetime.datetime]) -> Optional[str]:
+    """Serializa um datetime ingênuo (armazenado em UTC) com o sufixo 'Z',
+    para que o JavaScript do frontend interprete corretamente como UTC em
+    vez de horário local do navegador."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=datetime.timezone.utc).isoformat()
+
+def _mark_module_complete(db: Session, user_id: int, module_id: int, score: float):
+    """Único ponto que grava conclusão de módulo — score sempre calculado
+    pelo servidor (nunca recebido pronto do cliente). Reaproveitado pelo
+    router de progresso (módulo sem prova) e pelo de quiz (prova corrigida)."""
+    progress = db.query(models.ModuleProgress).filter(
+        models.ModuleProgress.module_id == module_id,
+        models.ModuleProgress.user_id == user_id
+    ).first()
+    if not progress:
+        progress = models.ModuleProgress(user_id=user_id, module_id=module_id)
+        db.add(progress)
+    progress.is_completed = True
+    progress.score_final = score
+    progress.completed_at = datetime.datetime.utcnow()
+    db.commit()
+
+# ---------------- Upload: nome de arquivo seguro + limites ----------------
+ALLOWED_VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv"}
+ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "500")) * 1024 * 1024
+_SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
+def sanitize_filename(name: str, allowed_ext: set) -> str:
+    """Nunca usar o nome de arquivo enviado pelo cliente direto num
+    os.path.join — ele pode conter '../', separadores de caminho, etc.
+    Extrai só o basename, remove caracteres fora de um allowlist e valida
+    a extensão contra a lista permitida para o tipo de upload. Determinístico
+    (mesma entrada → mesma saída) — o upload em chunks precisa bater o mesmo
+    nome sanitizado entre init/chunk/create_module; a aleatoriedade vem do
+    upload_id (uuid gerado uma vez em init_upload), não deste helper."""
+    base = os.path.basename((name or "").strip())
+    base = _SAFE_CHARS.sub("_", base)
+    ext = os.path.splitext(base)[1].lower()
+    if not base or ext not in allowed_ext:
+        raise HTTPException(status_code=400, detail=f"Tipo de arquivo não permitido. Use: {', '.join(sorted(allowed_ext))}")
+    return base
+
+def safe_filename(name: str, allowed_ext: set) -> str:
+    """Para uploads de arquivo único (uma requisição só): sanitiza e prefixa
+    com um uuid novo, garantindo nome final imprevisível e sem colisão."""
+    return f"{uuid.uuid4()}_{sanitize_filename(name, allowed_ext)}"
+
+def check_upload_size(size_bytes: int):
+    if size_bytes > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"Arquivo excede o limite de {MAX_UPLOAD_BYTES // (1024*1024)}MB.")

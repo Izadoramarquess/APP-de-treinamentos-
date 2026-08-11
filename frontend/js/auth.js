@@ -153,7 +153,7 @@ Object.assign(App, {
             if(p1!==p2){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
             if(p1==='Mudar@123'){err.textContent='Escolha uma senha diferente da temporária.';err.style.display='block';return;}
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Salvando...';
-            const fd=new FormData(); fd.append('password',p1);
+            const fd=new FormData(); fd.append('new_password',p1);
             const res=await fetch('/auth/change-password',{method:'POST',headers:this.apiHeaders(),body:fd});
             if(res.ok){this.user.must_change_password=false;if(closeBtn)closeBtn.style.display='';this.closeModal();this.showDashboard();}
             else{const d=await res.json();err.textContent=d.detail||'Erro ao trocar senha.';err.style.display='block';btn.disabled=false;btn.textContent='Salvar e continuar';}

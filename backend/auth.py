@@ -1,4 +1,6 @@
 import os
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -6,8 +8,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 import models
-from fastapi import Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import HTTPException
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -78,6 +79,29 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+# Rate limit de tentativas de login — simples, em memória. Suficiente para
+# o tamanho atual do projeto sem adicionar Redis/dependência nova; a
+# limitação conhecida é que não é compartilhado entre workers do gunicorn
+# (cada worker tem seu próprio contador), então o limite real efetivo é
+# LOGIN_MAX_ATTEMPTS × nº de workers. Ainda assim é muito melhor que não
+# ter limite nenhum.
+_LOGIN_ATTEMPTS = defaultdict(list)
+LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
+LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))
+
+def _check_login_rate_limit(username: str):
+    now = time.time()
+    attempts = [t for t in _LOGIN_ATTEMPTS[username] if now - t < LOGIN_LOCKOUT_SECONDS]
+    _LOGIN_ATTEMPTS[username] = attempts
+    if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Muitas tentativas de login. Tente novamente em alguns minutos.")
+
+def _register_failed_login(username: str):
+    _LOGIN_ATTEMPTS[username].append(time.time())
+
+def _clear_login_attempts(username: str):
+    _LOGIN_ATTEMPTS.pop(username, None)
+
 def get_default_team(db: Session) -> models.Team:
     """Time usado para usuários que ainda não têm equipe atribuída (Time é obrigatório em User)."""
     team = db.query(models.Team).filter(models.Team.name == "Sem Equipe").first()
@@ -90,7 +114,7 @@ def get_default_team(db: Session) -> models.Team:
 
 def register_user(db: Session, user: UserCreate):
     if not is_allowed_email_domain(user.email):
-        return {"error": "Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma."}
+        raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
 
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
     if existing_user:
@@ -112,12 +136,12 @@ def register_user(db: Session, user: UserCreate):
                 db.commit()
                 return {"message": "Cadastro concluído. Seu convite foi aceito!"}
             elif user.invite_token and existing_user.invite_expires_at and existing_user.invite_expires_at <= datetime.utcnow():
-                return {"error": "Token de convite expirado. Solicite um novo convite ao administrador."}
+                raise HTTPException(status_code=400, detail="Token de convite expirado. Solicite um novo convite ao administrador.")
             else:
                 # E-mail com convite pendente mas sem token válido → não ativa
-                return {"error": "E-mail com convite pendente. Use o link de convite enviado pelo administrador."}
+                raise HTTPException(status_code=400, detail="E-mail com convite pendente. Use o link de convite enviado pelo administrador.")
         else:
-            return {"error": "E-mail já cadastrado."}
+            raise HTTPException(status_code=400, detail="E-mail já cadastrado.")
 
     # Cadastro novo (sem convite) → sempre fica como "pending" aguardando aprovação do admin
     hashed_password = get_password_hash(user.password)
@@ -136,12 +160,17 @@ def register_user(db: Session, user: UserCreate):
     return {"message": "Cadastro criado com sucesso. Aguardando aprovação do administrador."}
 
 def login_for_access_token(db: Session, form_data: LoginRequest):
+    _check_login_rate_limit(form_data.username)
+
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
-        return {"error": "Usuário ou senha incorretos"}
+        _register_failed_login(form_data.username)
+        raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
 
     if user.status not in ["ativo", "approved"]:
-        return {"error": "Cadastro pendente de aprovação ou convite não aceito."}
+        raise HTTPException(status_code=403, detail="Cadastro pendente de aprovação ou convite não aceito.")
+
+    _clear_login_attempts(form_data.username)
 
     # Upgrade transparente: se a senha ainda está em bcrypt (hash legado),
     # re-hasheia para argon2id agora que sabemos que a senha em texto puro está correta.
@@ -163,9 +192,3 @@ def login_for_access_token(db: Session, form_data: LoginRequest):
             "must_change_password": user.must_change_password  # ← envia flag para o frontend
         }
     }
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(lambda: None)):
-    # Note: To avoid circular imports, get_db is passed at runtime via dependency overrides or closure.
-    pass  # Will be implemented back in main.py instead, reverting this change!

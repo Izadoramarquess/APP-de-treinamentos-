@@ -27,18 +27,29 @@ cd APP-de-treinamentos-
 
 # 2. Criar o arquivo de configuração
 cp .env.example .env
-nano .env   # Edite as senhas e o domínio
+nano .env   # Preencha SECRET_KEY e DB_PASSWORD — a aplicação recusa subir sem eles
 
-# 3. Subir tudo
+# 3. Preparar a pasta de uploads para o usuário não-root do container (UID 1000)
+mkdir -p backend/uploads
+sudo chown -R 1000:1000 backend/uploads
+
+# 4. Subir tudo
 docker compose up --build -d
 
-# 4. Verificar se está rodando
+# 5. Verificar se está rodando
 docker compose ps
 ```
 
 O app estará disponível em `http://IP-DO-SERVIDOR:8000`
 
-**Login padrão:** `admin` / `admin` — **troque a senha no primeiro acesso.**
+**Login do admin:** a senha inicial é gerada automaticamente e aparece só
+uma vez no log de inicialização — pegue com:
+
+```bash
+docker compose logs backend | grep -A2 "USUÁRIO ADMIN CRIADO"
+```
+
+O admin é obrigado a trocar essa senha no primeiro login.
 
 ---
 
