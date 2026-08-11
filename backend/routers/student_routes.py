@@ -1,4 +1,4 @@
-"""Progresso do aluno: conclusão de módulo, trilhas matriculadas, certificados."""
+"""Progresso do aluno: conclusão de módulo, cursos matriculados, certificados."""
 import datetime
 import os
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete
+from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate
 
 router = APIRouter()
 
@@ -27,30 +27,8 @@ def complete_module(
     if has_final_exam:
         raise HTTPException(status_code=400, detail="Este módulo tem prova final — conclua respondendo a prova.")
     # Sem prova (só vídeo): não há nota a apurar, então o score é fixo — nunca vindo do cliente.
-    _mark_module_complete(db, current_user.id, module_id, 100.0)
-    return {"message": "Módulo concluído!", "completed": True}
-
-@router.get("/paths/{path_id}/progress")
-def get_path_progress(
-    path_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
-    if not path: raise HTTPException(404, "Trilha não encontrada")
-    total_modules = 0
-    completed_modules = 0
-    for course in path.courses:
-        for module in course.modules:
-            total_modules += 1
-            progress = db.query(models.ModuleProgress).filter(
-                models.ModuleProgress.module_id == module.id,
-                models.ModuleProgress.user_id == current_user.id,
-                models.ModuleProgress.is_completed == True
-            ).first()
-            if progress: completed_modules += 1
-    pct = round((completed_modules / total_modules * 100) if total_modules > 0 else 0)
-    return {"total": total_modules, "completed": completed_modules, "percent": pct}
+    certificate_issued = _mark_module_complete(db, current_user.id, module_id, 100.0)
+    return {"message": "Módulo concluído!", "completed": True, "certificate_issued": certificate_issued}
 
 @router.get("/courses/{course_id}/progress")
 def get_course_progress(
@@ -58,27 +36,52 @@ def get_course_progress(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    """Progresso módulo a módulo (usado pela tela de módulos do aluno)."""
     progresses = db.query(models.ModuleProgress).join(models.Module).filter(
         models.Module.course_id == course_id,
         models.ModuleProgress.user_id == current_user.id
     ).all()
     return [{"module_id": p.module_id, "completed": p.is_completed, "score": p.score_final} for p in progresses]
 
-@router.get("/my-paths")
-def get_my_paths(
+@router.get("/courses/{course_id}/progress-summary")
+def get_course_progress_summary(
+    course_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Percentual agregado do curso (substitui o antigo /paths/{id}/progress —
+    fica mais simples agora porque não precisa mais somar vários cursos de
+    uma trilha, o curso já é o próprio nível de topo)."""
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not course: raise HTTPException(404, "Curso não encontrado")
+    modules = db.query(models.Module).filter(models.Module.course_id == course_id).all()
+    total = len(modules)
+    completed = 0
+    if total:
+        module_ids = [m.id for m in modules]
+        completed = db.query(models.ModuleProgress).filter(
+            models.ModuleProgress.module_id.in_(module_ids),
+            models.ModuleProgress.user_id == current_user.id,
+            models.ModuleProgress.is_completed == True
+        ).count()
+    pct = round((completed / total * 100) if total > 0 else 0)
+    return {"total": total, "completed": completed, "percent": pct}
+
+@router.get("/my-courses")
+def get_my_courses(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
     enrollments = db.query(models.Enrollment).filter(
         models.Enrollment.user_id == current_user.id
     ).all()
-    path_ids = [e.path_id for e in enrollments]
-    if not path_ids:
+    course_ids = [e.course_id for e in enrollments]
+    if not course_ids:
         return []
-    paths = db.query(models.LearningPath).filter(
-        models.LearningPath.id.in_(path_ids)
+    courses = db.query(models.Course).filter(
+        models.Course.id.in_(course_ids)
     ).all()
-    return paths
+    return courses
 
 @router.get("/team/progress")
 def get_team_progress(
@@ -119,44 +122,19 @@ def get_team_progress(
         })
     return result
 
-@router.post("/modules/{module_id}/certificate")
+@router.post("/courses/{course_id}/certificate")
 def issue_certificate(
-    module_id: int,
+    course_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Verificar se o módulo foi concluído
-    progress = db.query(models.ModuleProgress).filter(
-        models.ModuleProgress.module_id == module_id,
-        models.ModuleProgress.user_id == current_user.id,
-        models.ModuleProgress.is_completed == True
-    ).first()
-    if not progress:
-        raise HTTPException(400, "Módulo não concluído.")
-
-    # Verificar se já tem certificado
-    existing = db.query(models.Certificate).filter(
-        models.Certificate.module_id == module_id,
-        models.Certificate.user_id == current_user.id
-    ).first()
-    if existing:
-        return {"message": "Certificado já emitido.", "certificate_id": existing.id, "issued_at": iso_utc(existing.issued_at), "expires_at": iso_utc(existing.expires_at)}
-
-    # Certificado sempre tem validade: usa a do módulo, ou um padrão configurável se o módulo não definir uma.
-    module = db.query(models.Module).filter(models.Module.id == module_id).first()
-    from dateutil.relativedelta import relativedelta
-    months = (module.validity_months if module and module.validity_months else None) or int(os.getenv("CERT_DEFAULT_VALIDITY_MONTHS", "12"))
-    expires_at = datetime.datetime.utcnow() + relativedelta(months=months)
-
-    cert = models.Certificate(
-        user_id=current_user.id,
-        module_id=module_id,
-        file_url="",
-        expires_at=expires_at
-    )
-    db.add(cert)
-    db.commit()
-    db.refresh(cert)
+    """Gatilho manual idempotente — a emissão normalmente já acontece
+    sozinha em _mark_module_complete quando o último módulo do curso é
+    concluído. Existe pra permitir reconferir/reemitir sem quebrar nada se
+    chamado de novo."""
+    cert = _check_and_issue_course_certificate(db, current_user.id, course_id)
+    if not cert:
+        raise HTTPException(400, "Curso ainda não foi concluído (nem todos os módulos estão completos).")
     return {"message": "Certificado emitido!", "certificate_id": cert.id, "issued_at": iso_utc(cert.issued_at), "expires_at": iso_utc(cert.expires_at)}
 
 @router.get("/my-certificates")
@@ -169,11 +147,11 @@ def get_my_certificates(
     ).all()
     result = []
     for c in certs:
-        module = db.query(models.Module).filter(models.Module.id == c.module_id).first()
+        course = db.query(models.Course).filter(models.Course.id == c.course_id).first()
         result.append({
             "certificate_id": c.id,
-            "module_id": c.module_id,
-            "module_title": module.title if module else "—",
+            "course_id": c.course_id,
+            "course_title": course.title if course else "—",
             "issued_at": iso_utc(c.issued_at),
             "expires_at": iso_utc(c.expires_at),
             "file_url": c.file_url

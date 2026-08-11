@@ -36,27 +36,25 @@ class User(Base):
     course_progress = relationship("ModuleProgress", back_populates="user")
     invited_by = relationship("User", remote_side=[id])
 
-class LearningPath(Base):
-    __tablename__ = "learning_paths"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(Text)
-    is_standard_training = Column(Boolean, default=False)
-    
-    courses = relationship("Course", back_populates="path", order_by="Course.order")
-    enrollments = relationship("Enrollment", back_populates="path")
-
 class Course(Base):
+    """Nível de topo do catálogo (antes havia uma LearningPath/"Trilha" por
+    cima, removida por ser burocracia demais para o fluxo de subir conteúdo).
+    Absorve o que antes vivia em LearningPath (is_standard_training) e em
+    Module (validity_months, certificate_template_url) — o certificado
+    agora é um por curso, não um por módulo."""
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True, index=True)
-    path_id = Column(Integer, ForeignKey("learning_paths.id"))
     order = Column(Integer, default=1)
     title = Column(String, index=True)
     description = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
-    path = relationship("LearningPath", back_populates="courses")
+    is_standard_training = Column(Boolean, default=False)
+    validity_months = Column(Integer, nullable=True)
+    certificate_template_url = Column(String, nullable=True)
+
     modules = relationship("Module", back_populates="course", order_by="Module.order")
+    enrollments = relationship("Enrollment", back_populates="course")
+    certificates = relationship("Certificate", back_populates="course")
 
 class Module(Base):
     __tablename__ = "modules"
@@ -67,14 +65,11 @@ class Module(Base):
     description = Column(Text)
     video_url = Column(String, nullable=True)
     thumbnail_url = Column(String, nullable=True)
-    certificate_template_url = Column(String, nullable=True)
-    validity_months = Column(Integer, nullable=True)
-    
+
     course = relationship("Course", back_populates="modules")
     materials = relationship("Material", back_populates="module")
     questions = relationship("Question", back_populates="module")
     progress = relationship("ModuleProgress", back_populates="module")
-    certificates = relationship("Certificate", back_populates="module")
 
 class Material(Base):
     __tablename__ = "materials"
@@ -104,11 +99,11 @@ class Enrollment(Base):
     __tablename__ = "enrollments"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    path_id = Column(Integer, ForeignKey("learning_paths.id"))
+    course_id = Column(Integer, ForeignKey("courses.id"))
     enrolled_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
+
     user = relationship("User", back_populates="enrollments")
-    path = relationship("LearningPath", back_populates="enrollments")
+    course = relationship("Course", back_populates="enrollments")
 
 class ModuleProgress(Base):
     __tablename__ = "module_progress"
@@ -123,16 +118,18 @@ class ModuleProgress(Base):
     module = relationship("Module", back_populates="progress")
 
 class Certificate(Base):
+    """Um certificado por (usuário, curso) — emitido automaticamente quando
+    todos os módulos do curso são concluídos (ver deps._check_and_issue_course_certificate)."""
     __tablename__ = "certificates"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    module_id = Column(Integer, ForeignKey("modules.id"))
+    course_id = Column(Integer, ForeignKey("courses.id"))
     file_url = Column(String)
     issued_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
-    
+
     user = relationship("User", back_populates="certificates")
-    module = relationship("Module", back_populates="certificates")
+    course = relationship("Course", back_populates="certificates")
 
 class EmailLog(Base):
     __tablename__ = "email_logs"
@@ -189,28 +186,20 @@ class ModuleSchema(BaseModel):
     description: str
     video_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
-    certificate_template_url: Optional[str] = None
-    validity_months: Optional[int] = None
     materials: List[MaterialSchema] = []
     questions: List[QuestionPublicSchema] = []
     class Config: from_attributes = True
 
 class CourseSchema(BaseModel):
     id: int
-    path_id: int
     order: int
     title: str
     description: str
     created_at: datetime.datetime
-    modules: List[ModuleSchema] = []
-    class Config: from_attributes = True
-
-class LearningPathSchema(BaseModel):
-    id: int
-    title: str
-    description: str
     is_standard_training: bool = False
-    courses: List[CourseSchema] = []
+    validity_months: Optional[int] = None
+    certificate_template_url: Optional[str] = None
+    modules: List[ModuleSchema] = []
     class Config: from_attributes = True
 
 class UserSchema(BaseModel):
@@ -240,7 +229,7 @@ class EmailLogSchema(BaseModel):
 class EnrollmentSchema(BaseModel):
     id: int
     user_id: int
-    path_id: int
+    course_id: int
     enrolled_at: datetime.datetime
     class Config: from_attributes = True
 

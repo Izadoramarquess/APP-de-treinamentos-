@@ -65,10 +65,51 @@ def iso_utc(dt: Optional[datetime.datetime]) -> Optional[str]:
         return None
     return dt.replace(tzinfo=datetime.timezone.utc).isoformat()
 
+def _check_and_issue_course_certificate(db: Session, user_id: int, course_id: int):
+    """Confere se todos os módulos do curso estão concluídos e, se sim,
+    emite o certificado (um por usuário+curso) — chamado automaticamente
+    por _mark_module_complete, nunca precisa ser disparado manualmente pelo
+    frontend. Devolve o Certificate se emitiu/já existia, ou None se ainda
+    faltam módulos."""
+    modules = db.query(models.Module).filter(models.Module.course_id == course_id).all()
+    if not modules:
+        return None
+    module_ids = [m.id for m in modules]
+    done_count = db.query(models.ModuleProgress).filter(
+        models.ModuleProgress.user_id == user_id,
+        models.ModuleProgress.module_id.in_(module_ids),
+        models.ModuleProgress.is_completed == True
+    ).count()
+    if done_count < len(modules):
+        return None
+
+    existing = db.query(models.Certificate).filter(
+        models.Certificate.user_id == user_id,
+        models.Certificate.course_id == course_id
+    ).first()
+    if existing:
+        return existing
+
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    from dateutil.relativedelta import relativedelta
+    months = (course.validity_months if course and course.validity_months else None) or int(os.getenv("CERT_DEFAULT_VALIDITY_MONTHS", "12"))
+    cert = models.Certificate(
+        user_id=user_id,
+        course_id=course_id,
+        file_url="",
+        expires_at=datetime.datetime.utcnow() + relativedelta(months=months)
+    )
+    db.add(cert)
+    db.commit()
+    db.refresh(cert)
+    return cert
+
 def _mark_module_complete(db: Session, user_id: int, module_id: int, score: float):
     """Único ponto que grava conclusão de módulo — score sempre calculado
     pelo servidor (nunca recebido pronto do cliente). Reaproveitado pelo
-    router de progresso (módulo sem prova) e pelo de quiz (prova corrigida)."""
+    router de progresso (módulo sem prova) e pelo de quiz (prova corrigida).
+    Ao final, confere automaticamente se isso completou o curso inteiro e
+    emite o certificado — o frontend não precisa chamar isso à parte."""
     progress = db.query(models.ModuleProgress).filter(
         models.ModuleProgress.module_id == module_id,
         models.ModuleProgress.user_id == user_id
@@ -80,6 +121,17 @@ def _mark_module_complete(db: Session, user_id: int, module_id: int, score: floa
     progress.score_final = score
     progress.completed_at = datetime.datetime.utcnow()
     db.commit()
+
+    module = db.query(models.Module).filter(models.Module.id == module_id).first()
+    certificate_issued = False
+    if module and module.course_id:
+        was_new = db.query(models.Certificate).filter(
+            models.Certificate.user_id == user_id,
+            models.Certificate.course_id == module.course_id
+        ).first() is None
+        cert = _check_and_issue_course_certificate(db, user_id, module.course_id)
+        certificate_issued = bool(cert) and was_new
+    return certificate_issued
 
 # ---------------- Upload: nome de arquivo seguro + limites ----------------
 ALLOWED_VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv"}

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, bindparam
+from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
@@ -141,43 +141,102 @@ def init_db():
             conn.execute(text("UPDATE users SET status = 'ativo' WHERE status = 'approved'"))
             conn.commit()
 
+    # Achatamento Trilha -> Curso -> Módulo em Curso -> Módulo: Curso vira o
+    # nível de topo (nunca mais precisa de uma "trilha" por cima pra existir).
+    # Curso absorve is_standard_training (vinha de LearningPath) e
+    # validity_months/certificate_template_url (vinham de Module — agora o
+    # certificado é um por curso, não um por módulo). Em bancos novos,
+    # create_all() já cria tudo certo; isto só migra bancos que ainda tinham
+    # o modelo antigo (learning_paths / courses.path_id / modules.validity_months).
+    if "courses" in inspector.get_table_names():
+        with engine.connect() as conn:
+            course_columns = [c['name'] for c in inspector.get_columns('courses')]
+            added_any = False
+            for col, coltype in [("is_standard_training", "BOOLEAN DEFAULT 0"), ("validity_months", "INTEGER"), ("certificate_template_url", "VARCHAR")]:
+                if col not in course_columns:
+                    conn.execute(text(f"ALTER TABLE courses ADD COLUMN {col} {coltype}"))
+                    added_any = True
+            if added_any:
+                conn.commit()
+                course_columns = [c['name'] for c in inspect(engine).get_columns('courses')]
+
+            module_columns = [c['name'] for c in inspector.get_columns('modules')] if "modules" in inspector.get_table_names() else []
+
+            # Backfill is_standard_training a partir da trilha antiga (se a coluna path_id ainda existir).
+            if 'path_id' in course_columns and "learning_paths" in inspector.get_table_names():
+                conn.execute(text("""
+                    UPDATE courses SET is_standard_training = (
+                        SELECT is_standard_training FROM learning_paths WHERE learning_paths.id = courses.path_id
+                    ) WHERE path_id IS NOT NULL
+                """))
+                conn.commit()
+
+            # Backfill validity_months/certificate_template_url a partir do primeiro módulo não-nulo de cada curso.
+            if 'validity_months' in module_columns:
+                rows = conn.execute(text("SELECT course_id, validity_months FROM modules WHERE course_id IS NOT NULL AND validity_months IS NOT NULL")).fetchall()
+                seen = set()
+                for course_id, months in rows:
+                    if course_id in seen: continue
+                    seen.add(course_id)
+                    conn.execute(text("UPDATE courses SET validity_months = :v WHERE id = :cid AND validity_months IS NULL"), {"v": months, "cid": course_id})
+                if rows: conn.commit()
+            if 'certificate_template_url' in module_columns:
+                rows = conn.execute(text("SELECT course_id, certificate_template_url FROM modules WHERE course_id IS NOT NULL AND certificate_template_url IS NOT NULL")).fetchall()
+                seen = set()
+                for course_id, url in rows:
+                    if course_id in seen: continue
+                    seen.add(course_id)
+                    conn.execute(text("UPDATE courses SET certificate_template_url = :u WHERE id = :cid AND certificate_template_url IS NULL"), {"u": url, "cid": course_id})
+                if rows: conn.commit()
+
+    # Enrollment: path_id -> course_id. Uma matrícula antiga em trilha vira
+    # uma matrícula por curso daquela trilha (uma trilha podia ter vários cursos).
+    if "enrollments" in inspector.get_table_names():
+        with engine.connect() as conn:
+            enr_columns = [c['name'] for c in inspector.get_columns('enrollments')]
+            if 'course_id' not in enr_columns:
+                conn.execute(text("ALTER TABLE enrollments ADD COLUMN course_id INTEGER REFERENCES courses(id)"))
+                conn.commit()
+                if 'path_id' in enr_columns:
+                    old_enrollments = conn.execute(text("SELECT id, user_id, path_id FROM enrollments WHERE path_id IS NOT NULL")).fetchall()
+                    for enr_id, user_id, path_id in old_enrollments:
+                        course_ids = [r[0] for r in conn.execute(text("SELECT id FROM courses WHERE path_id = :pid"), {"pid": path_id}).fetchall()]
+                        if not course_ids:
+                            continue
+                        conn.execute(text("UPDATE enrollments SET course_id = :cid WHERE id = :eid"), {"cid": course_ids[0], "eid": enr_id})
+                        for extra_cid in course_ids[1:]:
+                            exists = conn.execute(text("SELECT 1 FROM enrollments WHERE user_id=:uid AND course_id=:cid"), {"uid": user_id, "cid": extra_cid}).first()
+                            if not exists:
+                                conn.execute(text("INSERT INTO enrollments (user_id, course_id, enrolled_at) VALUES (:uid, :cid, CURRENT_TIMESTAMP)"), {"uid": user_id, "cid": extra_cid})
+                    conn.commit()
+
+    # Certificate: module_id -> course_id. Um certificado por módulo virava
+    # vários certificados pro mesmo curso — mantém só o mais antigo por
+    # (usuário, curso), já que agora é um certificado por curso.
+    if "certificates" in inspector.get_table_names():
+        with engine.connect() as conn:
+            cert_columns = [c['name'] for c in inspector.get_columns('certificates')]
+            if 'course_id' not in cert_columns:
+                conn.execute(text("ALTER TABLE certificates ADD COLUMN course_id INTEGER REFERENCES courses(id)"))
+                conn.commit()
+                if 'module_id' in cert_columns:
+                    old_certs = conn.execute(text("SELECT id, user_id, module_id FROM certificates WHERE module_id IS NOT NULL ORDER BY issued_at ASC")).fetchall()
+                    seen_pairs = set()
+                    for cert_id, user_id, module_id in old_certs:
+                        course_row = conn.execute(text("SELECT course_id FROM modules WHERE id = :mid"), {"mid": module_id}).first()
+                        if not course_row or course_row[0] is None:
+                            continue
+                        course_id = course_row[0]
+                        key = (user_id, course_id)
+                        if key in seen_pairs:
+                            conn.execute(text("DELETE FROM certificates WHERE id = :cid"), {"cid": cert_id})
+                            continue
+                        seen_pairs.add(key)
+                        conn.execute(text("UPDATE certificates SET course_id = :cid WHERE id = :id"), {"cid": course_id, "id": cert_id})
+                    conn.commit()
+
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
-    
-    # 3. Post-migration: Create 'Default Courses' for orphaned modules
-    db = SessionLocal()
-    try:
-        from models import LearningPath, Course, Module
-        # Check for modules without a course_id
-        orphaned_modules = db.query(Module).filter(Module.course_id == None).all()
-        if orphaned_modules:
-            print(f"Migrating {len(orphaned_modules)} modules to new tier...")
-            # For each Path, create one default Course and move modules there
-            paths = db.query(LearningPath).all()
-            for path in paths:
-                # Find modules that belong to this path (using the now-removed path_id column if it still exists in DB)
-                # Since SQLAlchemy model for Module no longer has path_id, we use raw SQL to find them
-                result = db.execute(text("SELECT id FROM modules WHERE path_id = :pid"), {"pid": path.id})
-                module_ids = [row[0] for row in result]
-
-                if module_ids:
-                    # Create a default course for this path
-                    default_course = Course(path_id=path.id, title="Módulos Gerais", description="Módulos migrados da versão anterior", order=1)
-                    db.add(default_course)
-                    db.flush()
-
-                    # Update modules to link to this course
-                    stmt = text("UPDATE modules SET course_id = :cid WHERE id IN :ids").bindparams(bindparam("ids", expanding=True))
-                    db.execute(stmt, {"cid": default_course.id, "ids": module_ids})
-            
-            # Remove the old path_id column from modules to clean up (SQLite doesn't support DROP COLUMN well before 3.35.0)
-            # but we can leave it there as redundant for now.
-            db.commit()
-    except Exception as e:
-        print(f"Error during data migration: {e}")
-        db.rollback()
-    finally:
-        db.close()
     
     # Seed admin user
     from sqlalchemy.orm import Session
@@ -243,16 +302,10 @@ def init_db():
             )
             db.add(lider_user)
 
-        # Seed Learning Paths
-        path_exists = db.query(models.LearningPath).filter(models.LearningPath.title == "Segurança da Informação").first()
-        if not path_exists:
-            path = models.LearningPath(title="Segurança da Informação", description="Princípios básicos de segurança digital e proteção de dados.")
-            db.add(path)
-            db.commit()
-            db.refresh(path)
-            
-            # Seed a course
-            course = models.Course(path_id=path.id, title="Introdução à LGPD", description="Conheça os fundamentos da Lei Geral de Proteção de Dados.", order=1)
+        # Seed Course (Curso é o nível de topo agora — não existe mais trilha por cima)
+        course_exists = db.query(models.Course).filter(models.Course.title == "Segurança da Informação").first()
+        if not course_exists:
+            course = models.Course(title="Segurança da Informação", description="Princípios básicos de segurança digital e proteção de dados — Introdução à LGPD.", order=1)
             db.add(course)
 
         db.commit()

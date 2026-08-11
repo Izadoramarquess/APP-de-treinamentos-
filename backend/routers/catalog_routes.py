@@ -1,8 +1,9 @@
-"""Catálogo: trilhas, cursos, módulos e upload de vídeo/materiais."""
+"""Catálogo: cursos e módulos (sem "Trilha" por cima — Curso é o nível de
+topo) e upload de vídeo/materiais."""
 import os
 import shutil
 import uuid
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -16,64 +17,69 @@ from deps import (
 
 router = APIRouter()
 
-# ---------------- Learning Paths ----------------
-@router.get("/paths", response_model=List[models.LearningPathSchema])
-def list_paths(db: Session = Depends(get_db)):
-    return db.query(models.LearningPath).all()
-
-@router.post("/paths", response_model=models.LearningPathSchema)
-def create_path(title: str = Form(...), description: str = Form(""), is_standard_training: bool = Form(False), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    path = models.LearningPath(title=title, description=description, is_standard_training=is_standard_training)
-    db.add(path)
-    db.commit()
-    db.refresh(path)
-    return path
-
-@router.put("/paths/{path_id}", response_model=models.LearningPathSchema)
-def update_path(path_id: int, title: str = Form(...), description: str = Form(""), is_standard_training: bool = Form(False), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
-    if not path:
-        raise HTTPException(status_code=404, detail="Trilha não encontrada")
-    path.title = title
-    path.description = description
-    path.is_standard_training = is_standard_training
-    db.commit()
-    db.refresh(path)
-    return path
-
-@router.delete("/paths/{path_id}")
-def delete_path(path_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    path = db.query(models.LearningPath).filter(models.LearningPath.id == path_id).first()
-    if not path:
-        raise HTTPException(status_code=404, detail="Trilha não encontrada")
-    db.query(models.Enrollment).filter(models.Enrollment.path_id == path_id).delete()
-    for course in db.query(models.Course).filter(models.Course.path_id == path.id).all():
-        delete_course(course.id, db, current_user)
-    db.delete(path)
-    db.commit()
-    return {"message": "Trilha excluída com sucesso"}
-
 # ---------------- Courses ----------------
-@router.get("/paths/{path_id}/courses", response_model=List[models.CourseSchema])
-def list_courses(path_id: int, db: Session = Depends(get_db)):
-    return db.query(models.Course).filter(models.Course.path_id == path_id).order_by(models.Course.order).all()
+@router.get("/courses", response_model=List[models.CourseSchema])
+def list_courses(db: Session = Depends(get_db)):
+    return db.query(models.Course).order_by(models.Course.order).all()
 
-@router.post("/paths/{path_id}/courses", response_model=models.CourseSchema)
-def create_course(path_id: int, title: str = Form(...), description: str = Form(""), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
-    course = models.Course(path_id=path_id, title=title, description=description, order=order)
+@router.post("/courses", response_model=models.CourseSchema)
+def create_course(
+    title: str = Form(...),
+    description: str = Form(""),
+    order: int = Form(1),
+    is_standard_training: bool = Form(False),
+    validity_months: int = Form(None),
+    certificate_template: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin"]))
+):
+    cert_path = None
+    if certificate_template and certificate_template.filename:
+        check_upload_size(certificate_template.size or 0)
+        cert_filename = f"cert_tpl_{safe_filename(certificate_template.filename, ALLOWED_IMAGE_EXT)}"
+        with open(os.path.join(UPLOADS_DIR, cert_filename), "wb") as buffer:
+            shutil.copyfileobj(certificate_template.file, buffer)
+        cert_path = f"/uploads/{cert_filename}"
+
+    course = models.Course(
+        title=title, description=description, order=order,
+        is_standard_training=is_standard_training,
+        validity_months=validity_months,
+        certificate_template_url=cert_path,
+    )
     db.add(course)
     db.commit()
     db.refresh(course)
     return course
 
 @router.put("/courses/{course_id}", response_model=models.CourseSchema)
-def update_course(course_id: int, title: str = Form(...), description: str = Form(""), order: int = Form(1), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def update_course(
+    course_id: int,
+    title: str = Form(...),
+    description: str = Form(""),
+    order: int = Form(1),
+    is_standard_training: bool = Form(False),
+    validity_months: int = Form(None),
+    certificate_template: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin"]))
+):
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
     course.title = title
     course.description = description
     course.order = order
+    course.is_standard_training = is_standard_training
+    course.validity_months = validity_months
+
+    if certificate_template and certificate_template.filename:
+        check_upload_size(certificate_template.size or 0)
+        cert_filename = f"cert_tpl_{safe_filename(certificate_template.filename, ALLOWED_IMAGE_EXT)}"
+        with open(os.path.join(UPLOADS_DIR, cert_filename), "wb") as buffer:
+            shutil.copyfileobj(certificate_template.file, buffer)
+        course.certificate_template_url = f"/uploads/{cert_filename}"
+
     db.commit()
     db.refresh(course)
     return course
@@ -83,14 +89,17 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
-    # Delete dependent modules
+    # Antes isso era responsabilidade do delete_path (que não existe mais) — o
+    # Curso é o nível de topo agora, então ele mesmo limpa matrícula/certificado.
+    db.query(models.Enrollment).filter(models.Enrollment.course_id == course_id).delete()
+    db.query(models.Certificate).filter(models.Certificate.course_id == course_id).delete()
     for module in db.query(models.Module).filter(models.Module.course_id == course.id).all():
         delete_module(module.id, db, current_user)
     db.delete(course)
     db.commit()
     return {"message": "Curso excluído com sucesso"}
 
-# ---------------- Modules (formerly Courses) ----------------
+# ---------------- Modules ----------------
 @router.get("/courses/{course_id}/modules", response_model=List[models.ModuleSchema])
 def list_modules(course_id: int, db: Session = Depends(get_db)):
     return db.query(models.Module).filter(models.Module.course_id == course_id).order_by(models.Module.order).all()
@@ -121,15 +130,13 @@ def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_in
 @router.post("/courses/{course_id}/modules", response_model=models.ModuleSchema)
 def create_module(
     course_id: int,
-    title: str = Form(...),
+    title: str = Form(None),
     description: str = Form(""),
     order: int = Form(1),
-    validity_months: int = Form(None),
     upload_id: str = Form(None),
     filename: str = Form(None),
     video: UploadFile = File(None),
     thumbnail: UploadFile = File(None),
-    cert_template: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
@@ -163,23 +170,17 @@ def create_module(
             shutil.copyfileobj(thumbnail.file, buffer)
         thumbnail_path = f"/uploads/{thumbnail_filename}"
 
-    cert_path = None
-    if cert_template and cert_template.filename:
-        check_upload_size(cert_template.size or 0)
-        cert_filename = f"cert_tpl_{safe_filename(cert_template.filename, ALLOWED_IMAGE_EXT)}"
-        with open(os.path.join(final_dir, cert_filename), "wb") as buffer:
-            shutil.copyfileobj(cert_template.file, buffer)
-        cert_path = f"/uploads/{cert_filename}"
+    # Título é opcional — sem ele, vira "Módulo N" (menos um campo pra
+    # preencher em toda pergunta ao subir vários vídeos em sequência).
+    final_title = (title or "").strip() or f"Módulo {order}"
 
     module = models.Module(
         course_id=course_id,
         order=order,
-        title=title,
+        title=final_title,
         description=description,
         video_url=video_url,
         thumbnail_url=thumbnail_path,
-        certificate_template_url=cert_path,
-        validity_months=validity_months
     )
     db.add(module)
     db.commit()
@@ -189,10 +190,9 @@ def create_module(
 @router.put("/modules/{module_id}", response_model=models.ModuleSchema)
 def update_module(
     module_id: int,
-    title: str = Form(...),
-    description: str = Form(...),
+    title: str = Form(None),
+    description: str = Form(""),
     order: int = Form(1),
-    validity_months: int = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
@@ -200,10 +200,9 @@ def update_module(
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
 
-    module.title = title
+    module.title = (title or "").strip() or f"Módulo {order}"
     module.description = description
     module.order = order
-    module.validity_months = validity_months
 
     db.commit()
     db.refresh(module)
@@ -218,7 +217,6 @@ def delete_module(module_id: int, db: Session = Depends(get_db), current_user: m
     db.query(models.Question).filter(models.Question.module_id == module.id).delete()
     db.query(models.Material).filter(models.Material.module_id == module.id).delete()
     db.query(models.ModuleProgress).filter(models.ModuleProgress.module_id == module.id).delete()
-    db.query(models.Certificate).filter(models.Certificate.module_id == module.id).delete()
 
     db.delete(module)
     db.commit()

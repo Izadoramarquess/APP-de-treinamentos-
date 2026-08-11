@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════
-   VISÃO ADMIN — usuários, convites, equipes, trilhas/cursos/módulos, quiz
+   VISÃO ADMIN — usuários, convites, equipes, cursos/módulos, quiz
 ════════════════════════════════════════ */
 Object.assign(App, {
     async renderAdminUsers() {
@@ -245,98 +245,45 @@ Object.assign(App, {
         modal.classList.remove('hidden');
     },
 
-    async renderAdminPaths() {
-        this._resetContainerStyles(); this.currentPath=null; this.currentCourse=null;
+    /* ════════════════════════════════════════
+       CURSOS — nível de topo (sem Trilha por cima)
+    ════════════════════════════════════════ */
+    async renderAdminCourses() {
+        this._resetContainerStyles(); this.currentCourse=null;
         const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({title:'Trilhas de Aprendizagem',actionLabel:'+ Nova Trilha',actionFn:'App.showCreatePathModal()'})+
-            `<div id="paths-wrapper"><div class="loader">Carregando</div></div>`;
-        const res=await fetch('/paths',{headers:this.apiHeaders()}); const paths=await res.json();
-        const wrapper=document.getElementById('paths-wrapper'); wrapper.innerHTML='';
-        if(!paths.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📚</div><p>Nenhuma trilha criada ainda.</p></div>';return;}
-        paths.forEach(p=>{
-            wrapper.innerHTML+=`<div class="card" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
-                <div style="flex:1;min-width:0">
-                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${p.title}</h3>
-                    <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${p.description||'Sem descrição.'}</p>
-                </div>
-                <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${this.actionBtn('✏️ Editar',`App.showEditPathModal(${p.id},'${p.title.replace(/'/g,"\\'")}','${(p.description||'').replace(/'/g,"\\'")}',${!!p.is_standard_training})`)}
-                    ${this.actionBtn('🗑',`App.deletePath(${p.id},'${p.title.replace(/'/g,"\\'")}')`, 'danger')}
-                    ${this.actionBtn('Ver cursos →',`App.renderAdminCourses(${p.id},'${p.title.replace(/'/g,"\\'")}')`, 'primary')}
-                </div>
-            </div>`;
-        });
-    },
-
-    _pathModal(id, title, desc, is_std, isEdit) {
-        const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
-        body.className='';
-        body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">${isEdit?'Editar':'Nova'} Trilha</h3>
-            <form id="pform">
-                <div class="form-group"><label>Título</label><input type="text" id="p-title" class="form-control" value="${title||''}" required></div>
-                <div class="form-group"><label>Descrição</label><textarea id="p-desc" class="form-control" rows="3">${desc||''}</textarea></div>
-                <div class="form-group" style="display:flex;gap:8px;align-items:center">
-                    <input type="checkbox" id="p-std" ${is_std?'checked':''} style="width:16px;height:16px;accent-color:var(--primary-light)">
-                    <label style="margin:0;font-size:0.88rem">Treinamento obrigatório padronizado</label>
-                </div>
-                <div style="display:flex;gap:0.5rem;margin-top:1rem">
-                    <button type="submit" class="btn btn-primary" style="flex:1">${isEdit?'Salvar':'Criar'}</button>
-                    <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
-                </div>
-            </form>`;
-        document.getElementById('pform').onsubmit=async(e)=>{
-            e.preventDefault(); const fd=new FormData();
-            fd.append('title',document.getElementById('p-title').value);
-            fd.append('description',document.getElementById('p-desc').value);
-            fd.append('is_standard_training',document.getElementById('p-std').checked);
-            await fetch(isEdit?`/paths/${id}`:'/paths',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
-            this.closeModal(); this.renderAdminPaths();
-        };
-        modal.classList.remove('hidden');
-    },
-    showCreatePathModal()                   { this._pathModal(null,'','',false,false); },
-    showEditPathModal(id,title,desc,is_std) { this._pathModal(id,title,desc,is_std,true); },
-    async deletePath(id, title) {
-        if(!confirm(`Excluir a trilha "${title}"?\nTodos os cursos e módulos serão removidos.`)) return;
-        await fetch(`/paths/${id}`,{method:'DELETE',headers:this.apiHeaders()});
-        this.renderAdminPaths();
-    },
-
-    async renderAdminCourses(pathId, pathTitle) {
-        this._resetContainerStyles(); this.currentPath={id:pathId,title:pathTitle}; this.currentCourse=null;
-        const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({
-            title:`Cursos — ${pathTitle}`,
-            backLabel:'Trilhas',backFn:'App.renderAdminPaths()',
-            actionLabel:'+ Novo Curso',actionFn:`App.showCreateCourseModal(${pathId})`,
-            breadcrumbs:[{label:'Trilhas',fn:'App.renderAdminPaths()'},{label:pathTitle}]
-        })+`<div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
-        const res=await fetch(`/paths/${pathId}/courses`,{headers:this.apiHeaders()}); const courses=await res.json();
+        container.innerHTML=this.sectionHeader({title:'Cursos',actionLabel:'+ Novo Curso',actionFn:'App.showCreateCourseModal()'})+
+            `<div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
+        const res=await fetch('/courses',{headers:this.apiHeaders()}); const courses=await res.json();
         const wrapper=document.getElementById('courses-wrapper'); wrapper.innerHTML='';
-        if(!courses.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso nesta trilha ainda.</p></div>';return;}
+        if(!courses.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso criado ainda.</p></div>';return;}
         courses.forEach(c=>{
             wrapper.innerHTML+=`<div class="card" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
                 <div style="flex:1;min-width:0">
-                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.order?c.order+'. ':''}${c.title}</h3>
-                    <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||''}</p>
+                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.title}${c.is_standard_training?' <span style="font-size:0.65rem;font-weight:700;color:var(--primary-light);background:rgba(37,99,235,.1);padding:2px 8px;border-radius:20px;vertical-align:middle">PADRÃO</span>':''}</h3>
+                    <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||'Sem descrição.'}</p>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${this.actionBtn('✏️',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${c.order||1})`)}
-                    ${this.actionBtn('🗑',`App.deleteCourse(${c.id},'${c.title.replace(/'/g,"\\'")}',${pathId})`,'danger')}
+                    ${this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${!!c.is_standard_training},${c.validity_months||0})`)}
+                    ${this.actionBtn('🗑',`App.deleteCourse(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'danger')}
                     ${this.actionBtn('Módulos →',`App.renderAdminModules(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'primary')}
                 </div>
             </div>`;
         });
     },
 
-    _courseModal(id, title, desc, order, pathId, isEdit) {
+    _courseModal(id, title, desc, is_std, valMonths, isEdit) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">${isEdit?'Editar':'Novo'} Curso</h3>
             <form id="cform">
                 <div class="form-group"><label>Título</label><input type="text" id="c-title" class="form-control" value="${title||''}" required></div>
                 <div class="form-group"><label>Descrição</label><textarea id="c-desc" class="form-control" rows="3">${desc||''}</textarea></div>
-                <div class="form-group"><label>Ordem</label><input type="number" id="c-order" class="form-control" value="${order||1}"></div>
+                <div class="form-group" style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="c-std" ${is_std?'checked':''} style="width:16px;height:16px;accent-color:var(--primary-light)">
+                    <label style="margin:0;font-size:0.88rem">Treinamento obrigatório padronizado</label>
+                </div>
+                <div class="form-group"><label>Validade do certificado (meses)</label><input type="number" id="c-val" class="form-control" value="${valMonths||''}" placeholder="Padrão: 12"></div>
+                <div class="form-group"><label>Template de certificado (opcional)</label><input type="file" id="c-cert" class="form-control" accept="image/*"></div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">${isEdit?'Salvar':'Criar'}</button>
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
@@ -346,18 +293,20 @@ Object.assign(App, {
             e.preventDefault(); const fd=new FormData();
             fd.append('title',document.getElementById('c-title').value);
             fd.append('description',document.getElementById('c-desc').value);
-            fd.append('order',document.getElementById('c-order').value);
-            await fetch(isEdit?`/courses/${id}`:`/paths/${pathId}/courses`,{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
-            this.closeModal(); this.renderAdminCourses(this.currentPath.id,this.currentPath.title);
+            fd.append('is_standard_training',document.getElementById('c-std').checked);
+            const val=document.getElementById('c-val').value; if(val) fd.append('validity_months',val);
+            const certFile=document.getElementById('c-cert').files[0]; if(certFile) fd.append('certificate_template',certFile);
+            await fetch(isEdit?`/courses/${id}`:'/courses',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
+            this.closeModal(); this.renderAdminCourses();
         };
         modal.classList.remove('hidden');
     },
-    showCreateCourseModal(pathId)           { this._courseModal(null,'','',1,pathId,false); },
-    showEditCourseModal(id,title,desc,order){ this._courseModal(id,title,desc,order,null,true); },
-    async deleteCourse(id, title, pathId) {
-        if(!confirm(`Excluir o curso "${title}"?`)) return;
+    showCreateCourseModal()                            { this._courseModal(null,'','',false,null,false); },
+    showEditCourseModal(id,title,desc,is_std,valMonths) { this._courseModal(id,title,desc,is_std,valMonths,true); },
+    async deleteCourse(id, title) {
+        if(!confirm(`Excluir o curso "${title}"?\nTodos os módulos serão removidos.`)) return;
         await fetch(`/courses/${id}`,{method:'DELETE',headers:this.apiHeaders()});
-        this.renderAdminCourses(pathId,this.currentPath.title);
+        this.renderAdminCourses();
     },
 
     async renderAdminModules(courseId, courseTitle) {
@@ -365,13 +314,9 @@ Object.assign(App, {
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({
             title:`Módulos — ${courseTitle}`,
-            backLabel:'Cursos',backFn:`App.renderAdminCourses(${this.currentPath.id},'${this.currentPath.title.replace(/'/g,"\\'")}')`,
+            backLabel:'Cursos',backFn:'App.renderAdminCourses()',
             actionLabel:'+ Novo Módulo',actionFn:`App.showModuleUpload(${courseId},'${courseTitle.replace(/'/g,"\\'")}')`,
-            breadcrumbs:[
-                {label:'Trilhas',fn:'App.renderAdminPaths()'},
-                {label:this.currentPath.title,fn:`App.renderAdminCourses(${this.currentPath.id},'${this.currentPath.title.replace(/'/g,"\\'")}')` },
-                {label:courseTitle}
-            ]
+            breadcrumbs:[{label:'Cursos',fn:'App.renderAdminCourses()'},{label:courseTitle}]
         })+`
         <div id="modules-wrapper"><div class="loader">Carregando</div></div>
         <div class="card hidden" id="module-upload-card" style="margin-top:2rem;border-top:3px solid var(--primary-light)">
@@ -380,7 +325,7 @@ Object.assign(App, {
                 <input type="hidden" id="m-course-id">
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
                     <div>
-                        <div class="form-group"><label>Título</label><input type="text" id="m-title" class="form-control" required></div>
+                        <div class="form-group"><label>Título (opcional)</label><input type="text" id="m-title" class="form-control" placeholder="Em branco vira &quot;Módulo N&quot;"></div>
                         <div class="form-group"><label>Descrição</label><textarea id="m-desc" class="form-control" rows="3"></textarea></div>
                         <div class="form-group"><label>Ordem</label><input type="number" id="m-order" class="form-control" value="1" required></div>
                     </div>
@@ -408,7 +353,7 @@ Object.assign(App, {
                     <h4 style="margin:0.15rem 0 0;font-size:0.95rem">${m.title}</h4>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${this.actionBtn('✏️',`App.showEditModuleModal(${m.id},'${m.title.replace(/'/g,"\\'")}','${(m.description||'').replace(/'/g,"\\'")}',${m.order||1},${m.validity_months||0})`)}
+                    ${this.actionBtn('✏️',`App.showEditModuleModal(${m.id},'${m.title.replace(/'/g,"\\'")}','${(m.description||'').replace(/'/g,"\\'")}',${m.order||1})`)}
                     ${this.actionBtn('🗑',`App.deleteModule(${m.id},'${m.title.replace(/'/g,"\\'")}',${courseId})`,'danger')}
                     ${this.actionBtn('🎮 Quiz',`App.openQuizEditor(${m.id},'${m.video_url}')`)}
                 </div>
@@ -417,18 +362,15 @@ Object.assign(App, {
         this.bindModuleForm();
     },
 
-    showEditModuleModal(id, title, desc, order, valMonths) {
+    showEditModuleModal(id, title, desc, order) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:0.5rem;color:var(--primary)">Editar Módulo</h3>
             <p style="color:var(--text-dim);font-size:0.83rem;margin-bottom:1rem">Para trocar o vídeo, exclua e recrie o módulo.</p>
             <form id="emod-form">
-                <div class="form-group"><label>Título</label><input type="text" id="em-title" class="form-control" value="${title}" required></div>
+                <div class="form-group"><label>Título (opcional)</label><input type="text" id="em-title" class="form-control" value="${title}" placeholder="Em branco vira &quot;Módulo N&quot;"></div>
                 <div class="form-group"><label>Descrição</label><textarea id="em-desc" class="form-control" rows="3">${desc}</textarea></div>
-                <div style="display:flex;gap:1rem">
-                    <div class="form-group" style="flex:1"><label>Ordem</label><input type="number" id="em-order" class="form-control" value="${order}"></div>
-                    <div class="form-group" style="flex:1"><label>Validade certif. (meses)</label><input type="number" id="em-val" class="form-control" value="${valMonths||''}" placeholder="Opcional"></div>
-                </div>
+                <div class="form-group"><label>Ordem</label><input type="number" id="em-order" class="form-control" value="${order}"></div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">Salvar</button>
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
@@ -439,7 +381,6 @@ Object.assign(App, {
             fd.append('title',document.getElementById('em-title').value);
             fd.append('description',document.getElementById('em-desc').value);
             fd.append('order',document.getElementById('em-order').value);
-            if(document.getElementById('em-val').value) fd.append('validity_months',document.getElementById('em-val').value);
             await fetch(`/modules/${id}`,{method:'PUT',headers:this.apiHeaders(),body:fd});
             this.closeModal(); this.renderAdminModules(this.currentCourse.id,this.currentCourse.title);
         };

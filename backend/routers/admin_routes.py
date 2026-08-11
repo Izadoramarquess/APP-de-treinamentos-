@@ -24,14 +24,14 @@ def dashboard_stats(
 ):
     total_users    = db.query(models.User).filter(models.User.status == "ativo").count()
     pending_users  = db.query(models.User).filter(models.User.status == "pending").count()
-    total_paths    = db.query(models.LearningPath).count()
+    total_courses  = db.query(models.Course).count()
     total_modules  = db.query(models.Module).count()
     completions    = db.query(models.ModuleProgress).filter(models.ModuleProgress.is_completed == True).count()
     pending_invites= db.query(models.User).filter(models.User.status == "convite_pendente").count()
     return {
         "total_users": total_users,
         "pending_users": pending_users,
-        "total_paths": total_paths,
+        "total_courses": total_courses,
         "total_modules": total_modules,
         "completions": completions,
         "pending_invites": pending_invites
@@ -174,7 +174,7 @@ def invite_user_admin(
 @router.post("/enrollments", response_model=models.EnrollmentSchema)
 def enroll_user(
     user_id: int = Form(...),
-    path_id: int = Form(...),
+    course_id: int = Form(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
 ):
@@ -183,9 +183,9 @@ def enroll_user(
 
     # Validação de equipe para líderes
     if current_user.role == "lideranca" and target_user.team_id != current_user.team_id:
-        raise HTTPException(status_code=403, detail="Você só pode atribuir trilhas a membros da sua equipe.")
+        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos a membros da sua equipe.")
 
-    enrollment = models.Enrollment(user_id=user_id, path_id=path_id)
+    enrollment = models.Enrollment(user_id=user_id, course_id=course_id)
     db.add(enrollment)
     db.commit()
     db.refresh(enrollment)
@@ -287,8 +287,8 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
     db.refresh(team)
 
     # Calculado antes do dispatch para poder citar nos e-mails de convite/aviso.
-    standard_paths = db.query(models.LearningPath).filter(models.LearningPath.is_standard_training == True).all()
-    training_names = ", ".join(p.title for p in standard_paths) or "nenhum treinamento obrigatório definido ainda"
+    standard_courses = db.query(models.Course).filter(models.Course.is_standard_training == True).all()
+    training_names = ", ".join(c.title for c in standard_courses) or "nenhum treinamento obrigatório definido ainda"
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
 
     team_members_ids = []
@@ -344,11 +344,11 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             dispatch_team_member(email, False)
 
     # Matricula os membros nos treinamentos padrão
-    for spath in standard_paths:
+    for scourse in standard_courses:
         for member_id in team_members_ids:
-            existing_enrollment = db.query(models.Enrollment).filter(models.Enrollment.user_id == member_id, models.Enrollment.path_id == spath.id).first()
+            existing_enrollment = db.query(models.Enrollment).filter(models.Enrollment.user_id == member_id, models.Enrollment.course_id == scourse.id).first()
             if not existing_enrollment:
-                encl = models.Enrollment(user_id=member_id, path_id=spath.id)
+                encl = models.Enrollment(user_id=member_id, course_id=scourse.id)
                 db.add(encl)
 
     db.commit()

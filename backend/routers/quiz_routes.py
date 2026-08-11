@@ -94,7 +94,8 @@ def submit_exam(
     score = round((correct_count / total) * 100) if total else 0
     passed = score >= 80
 
+    certificate_issued = False
     if passed:
-        _mark_module_complete(db, current_user.id, module_id, float(score))
+        certificate_issued = _mark_module_complete(db, current_user.id, module_id, float(score))
 
-    return {"score": score, "passed": passed, "correct_count": correct_count, "total": total}
+    return {"score": score, "passed": passed, "correct_count": correct_count, "total": total, "certificate_issued": certificate_issued}
