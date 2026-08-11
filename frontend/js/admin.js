@@ -24,7 +24,7 @@ Object.assign(App, {
                 <td style="font-size:0.82rem">${u.role}</td>
                 <td>${this.statusBadge(u.status)}</td>
                 <td><div style="display:flex;gap:4px;flex-wrap:wrap;padding:4px 0">
-                    ${u.status==='pending'?this.actionBtn('✓ Aprovar',`App.changeUserStatus(${u.id},'approved')`,'success'):''}
+                    ${u.status==='pending'?this.actionBtn('✓ Aprovar',`App.changeUserStatus(${u.id},'ativo')`,'success'):''}
                     ${u.status==='pending'?this.actionBtn('✕ Rejeitar',`App.changeUserStatus(${u.id},'rejected')`,'danger'):''}
                     ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0})`)}
                     ${this.actionBtn('🔑 Resetar',`App.triggerPasswordReset(${u.id},'${u.username}')`)}
@@ -189,8 +189,15 @@ Object.assign(App, {
         const tbody=document.querySelector('#t-table tbody'); tbody.innerHTML='';
         if(!teams.length){tbody.innerHTML='<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">🏢</div><p>Nenhuma equipe criada.</p></div></td></tr>';return;}
         teams.forEach(t=>{
-            const total=t.members?t.members.length:0;
-            tbody.innerHTML+=`<tr><td><strong>${t.name}</strong></td><td style="font-size:0.85rem;color:var(--text-dim)">${t.description||'—'}</td><td style="font-size:0.85rem">${total} membro${total!==1?'s':''}</td></tr>`;
+            const members=t.members||[];
+            tbody.innerHTML+=`<tr>
+                <td style="vertical-align:top"><strong>${t.name}</strong></td>
+                <td style="font-size:0.85rem;color:var(--text-dim);vertical-align:top">${t.description||'—'}</td>
+                <td style="font-size:0.85rem">
+                    <div style="font-weight:600;margin-bottom:${members.length?'6px':'0'}">${members.length} membro${members.length!==1?'s':''}</div>
+                    ${members.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${members.map(m=>`<span title="${m.email}" style="padding:2px 9px;background:var(--bg-main);border:1px solid var(--border);border-radius:20px;font-size:0.75rem;white-space:nowrap">${m.username}${m.role==='lideranca'?' 👑':''}</span>`).join('')}</div>`:''}
+                </td>
+            </tr>`;
         });
     },
 

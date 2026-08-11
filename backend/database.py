@@ -134,6 +134,13 @@ def init_db():
                 except Exception as e:
                     print(f"Warning while enforcing NOT NULL on certificates.expires_at: {e}")
 
+    # "ativo" e "approved" significavam a mesma coisa (usuário liberado para
+    # logar) em pontos diferentes do código — padroniza tudo para "ativo".
+    if "users" in inspector.get_table_names():
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE users SET status = 'ativo' WHERE status = 'approved'"))
+            conn.commit()
+
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
     
@@ -209,7 +216,7 @@ def init_db():
                 email="admin@geotrilha.com.br",
                 hashed_password=hashed_password,
                 role="admin",
-                status="approved",
+                status="ativo",
                 department="Administração",
                 team_id=default_team.id,
                 must_change_password=True
@@ -230,7 +237,7 @@ def init_db():
                 email="lider@geotrilha.com.br",
                 hashed_password=hashed_password,
                 role="lideranca",
-                status="approved",
+                status="ativo",
                 department="Operações",
                 team_id=team_alpha.id
             )

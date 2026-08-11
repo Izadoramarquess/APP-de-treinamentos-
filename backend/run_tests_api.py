@@ -24,7 +24,11 @@ def login(username, password):
     return None, r.json()
 
 print("Pegando admin_token...")
-admin_token, _ = login("admin", "admin")
+# Desde que a senha padrão do admin passou a ser gerada aleatoriamente no
+# seed (ver database.py), este script não pode mais assumir "admin"/"admin"
+# — use TEST_ADMIN_USERNAME/TEST_ADMIN_PASSWORD no .env para apontar para
+# um admin de teste já existente no ambiente onde o script vai rodar.
+admin_token, _ = login(os.getenv("TEST_ADMIN_USERNAME", "admin"), os.getenv("TEST_ADMIN_PASSWORD", "admin123"))
 admin_headers = {"Authorization": f"Bearer {admin_token}"} if admin_token else {}
 
 if not admin_token:

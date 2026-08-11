@@ -167,7 +167,7 @@ def login_for_access_token(db: Session, form_data: LoginRequest):
         _register_failed_login(form_data.username)
         raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
 
-    if user.status not in ["ativo", "approved"]:
+    if user.status != "ativo":
         raise HTTPException(status_code=403, detail="Cadastro pendente de aprovação ou convite não aceito.")
 
     _clear_login_attempts(form_data.username)

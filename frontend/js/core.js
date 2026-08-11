@@ -23,7 +23,7 @@ const App = {
             const res = await fetch('/users/me', { headers: this.apiHeaders() });
             if (res.ok) {
                 this.user = await res.json();
-                if (this.user.status !== 'ativo' && this.user.status !== 'approved') return this.logoutPending();
+                if (this.user.status !== 'ativo') return this.logoutPending();
                 this.renderNavbar();
                 if (this.user.must_change_password) this.showForcePasswordChangeModal();
                 else this.showDashboard();
@@ -37,7 +37,6 @@ const App = {
     statusBadge(status) {
         const map = {
             'ativo':            { label: 'Ativo',      color: '#22c55e' },
-            'approved':         { label: 'Aprovado',   color: '#22c55e' },
             'pending':          { label: 'Pendente',   color: '#f59e0b' },
             'convite_pendente': { label: 'Convidado',  color: '#3b82f6' },
             'invited':          { label: 'Convidado',  color: '#3b82f6' },

@@ -87,12 +87,12 @@ def get_team_progress(
 ):
     if current_user.role == "admin":
         members = db.query(models.User).filter(
-            models.User.status.in_(["ativo", "approved"])
+            models.User.status == "ativo"
         ).all()
     else:
         members = db.query(models.User).filter(
             models.User.team_id == current_user.team_id,
-            models.User.status.in_(["ativo", "approved"])
+            models.User.status == "ativo"
         ).all()
 
     result = []

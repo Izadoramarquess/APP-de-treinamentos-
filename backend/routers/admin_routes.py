@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 import models
 import auth
+import email_utils
 from auth import get_password_hash
 from deps import get_db, authorize, iso_utc, DEFAULT_DEPARTMENT
 
@@ -21,7 +22,7 @@ def dashboard_stats(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
 ):
-    total_users    = db.query(models.User).filter(models.User.status.in_(["ativo","approved"])).count()
+    total_users    = db.query(models.User).filter(models.User.status == "ativo").count()
     pending_users  = db.query(models.User).filter(models.User.status == "pending").count()
     total_paths    = db.query(models.LearningPath).count()
     total_modules  = db.query(models.Module).count()
@@ -92,7 +93,13 @@ def admin_reset_password(user_id: int, db: Session = Depends(get_db), current_us
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     reset_link = f"{base_url}/?view=reset&token={reset_token}"
 
-    return {"reset_link": reset_link, "status_updated": user.status}
+    email_sent = email_utils.send_email(
+        db, user.email, "Redefinição de senha — GeoTrilha",
+        email_utils.render_template("reset_password.html", link_redefinicao=reset_link),
+        "reset_password"
+    )
+
+    return {"reset_link": reset_link, "status_updated": user.status, "email_sent": email_sent}
 
 @router.delete("/admin/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
@@ -156,7 +163,13 @@ def invite_user_admin(
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     invite_link = f"{base_url}/?view=convite&token={invite_token}"
 
-    return {"invite_link": invite_link}
+    email_sent = email_utils.send_email(
+        db, email, "Convite — Plataforma GeoTrilha",
+        email_utils.render_template("invite_generic.html", link_convite=invite_link),
+        "invite"
+    )
+
+    return {"invite_link": invite_link, "email_sent": email_sent}
 
 @router.post("/enrollments", response_model=models.EnrollmentSchema)
 def enroll_user(
@@ -199,7 +212,13 @@ def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: mod
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     invite_link = f"{base_url}/?view=convite&token={invite_token}"
 
-    return {"message": "Reenviado com sucesso", "invite_link": invite_link}
+    email_sent = email_utils.send_email(
+        db, user.email, "Convite — Plataforma GeoTrilha",
+        email_utils.render_template("invite_generic.html", link_convite=invite_link),
+        "invite"
+    )
+
+    return {"message": "Reenviado com sucesso", "invite_link": invite_link, "email_sent": email_sent}
 
 @router.post("/admin/users/{user_id}/cancel_invite")
 def cancel_invite(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
@@ -267,6 +286,11 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
     db.commit()
     db.refresh(team)
 
+    # Calculado antes do dispatch para poder citar nos e-mails de convite/aviso.
+    standard_paths = db.query(models.LearningPath).filter(models.LearningPath.is_standard_training == True).all()
+    training_names = ", ".join(p.title for p in standard_paths) or "nenhum treinamento obrigatório definido ainda"
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+
     team_members_ids = []
 
     def dispatch_team_member(email_addr, is_admin):
@@ -280,6 +304,12 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             user.team_id = team.id
             if is_admin: user.role = "lideranca"
             team_members_ids.append(user.id)
+            db.commit()  # persiste o novo team_id antes do e-mail sair (send_email também comita, mas é bom deixar explícito aqui)
+            email_utils.send_email(
+                db, user.email, f"Você foi adicionado à equipe {team.name} — GeoTrilha",
+                email_utils.render_template("team_added.html", nome_equipe=team.name, lista_treinamentos=training_names),
+                "team_added"
+            )
         else:
             random_pass = uuid.uuid4().hex
             invite_t = secrets.token_urlsafe(32)
@@ -298,6 +328,12 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             db.add(new_user)
             db.flush()
             team_members_ids.append(new_user.id)
+            invite_link = f"{base_url}/?view=convite&token={invite_t}"
+            email_utils.send_email(
+                db, email_addr, f"Convite — Equipe {team.name} na GeoTrilha",
+                email_utils.render_template("invite.html", nome_equipe=team.name, lista_treinamentos=training_names, link_convite=invite_link),
+                "invite"
+            )
 
     dispatch_team_member(team_admin_email, True)
 
@@ -307,8 +343,7 @@ def create_team(name: str = Form(...), description: str = Form(""), emails: str 
             if email == team_admin_email: continue
             dispatch_team_member(email, False)
 
-    # Liberar treinamentos padrão
-    standard_paths = db.query(models.LearningPath).filter(models.LearningPath.is_standard_training == True).all()
+    # Matricula os membros nos treinamentos padrão
     for spath in standard_paths:
         for member_id in team_members_ids:
             existing_enrollment = db.query(models.Enrollment).filter(models.Enrollment.user_id == member_id, models.Enrollment.path_id == spath.id).first()
