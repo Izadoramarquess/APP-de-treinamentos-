@@ -98,6 +98,8 @@ def get_team_progress(
             models.User.status == "ativo"
         ).all()
 
+    team_names = {t.id: t.name for t in db.query(models.Team).all()}
+
     result = []
     for member in members:
         total = db.query(models.ModuleProgress).filter(
@@ -109,16 +111,48 @@ def get_team_progress(
         ).count()
         enrollments = db.query(models.Enrollment).filter(
             models.Enrollment.user_id == member.id
-        ).count()
+        ).all()
+
+        # Detalhe por curso — o agregado acima soma tudo, mas quem acompanha
+        # precisa saber EM QUAL curso a pessoa travou, não só o total.
+        courses_detail = []
+        for enr in enrollments:
+            course = db.query(models.Course).filter(models.Course.id == enr.course_id).first()
+            if not course:
+                continue
+            module_ids = [m.id for m in db.query(models.Module.id).filter(models.Module.course_id == course.id).all()]
+            c_total = len(module_ids)
+            c_done = db.query(models.ModuleProgress).filter(
+                models.ModuleProgress.module_id.in_(module_ids),
+                models.ModuleProgress.user_id == member.id,
+                models.ModuleProgress.is_completed == True
+            ).count() if module_ids else 0
+            cert = db.query(models.Certificate).filter(
+                models.Certificate.user_id == member.id,
+                models.Certificate.course_id == course.id
+            ).first()
+            courses_detail.append({
+                "course_id": course.id,
+                "course_title": course.title,
+                "total": c_total,
+                "completed": c_done,
+                "percent": round((c_done / c_total * 100) if c_total > 0 else 0),
+                "certificate_issued": cert is not None,
+                "certificate_expires_at": iso_utc(cert.expires_at) if cert else None,
+            })
+
         result.append({
             "user_id": member.id,
             "username": member.username,
             "email": member.email,
             "role": member.role,
-            "enrollments": enrollments,
+            "team_id": member.team_id,
+            "team_name": team_names.get(member.team_id, "—"),
+            "enrollments": len(enrollments),
             "modules_total": total,
             "modules_done": done,
-            "percent": round((done / total * 100) if total > 0 else 0)
+            "percent": round((done / total * 100) if total > 0 else 0),
+            "courses": courses_detail,
         })
     return result
 

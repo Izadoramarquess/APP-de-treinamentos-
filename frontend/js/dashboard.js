@@ -2,6 +2,103 @@
    DASHBOARDS — telas iniciais de cada papel (admin, liderança, aluno)
 ════════════════════════════════════════ */
 Object.assign(App, {
+    // Usado tanto pela tela de Progresso do admin quanto por Minha Equipe
+    // (liderança) — ambas consomem o mesmo courses[] de /team/progress.
+    _progressCoursesDetailHtml(courses) {
+        if(!courses || !courses.length) return `<p style="margin:0;color:var(--text-dim);font-size:0.82rem">Nenhum curso matriculado.</p>`;
+        return `<table style="width:100%;font-size:0.8rem;border-collapse:collapse">
+            <thead><tr style="color:var(--text-dim);text-align:left">
+                <th style="padding:4px 8px;font-weight:600">Curso</th>
+                <th style="padding:4px 8px;font-weight:600">Progresso</th>
+                <th style="padding:4px 8px;font-weight:600">Certificado</th>
+            </tr></thead>
+            <tbody>
+            ${courses.map(c=>{
+                const pct=c.percent||0;
+                const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                const certHtml = c.certificate_issued
+                    ? `<span style="color:#16a34a;font-weight:600">✓ Emitido${c.certificate_expires_at?' · até '+new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):''}</span>`
+                    : `<span style="color:var(--text-dim)">—</span>`;
+                return `<tr>
+                    <td style="padding:4px 8px">${c.course_title}</td>
+                    <td style="padding:4px 8px;min-width:140px">
+                        <div style="display:flex;align-items:center;gap:0.5rem">
+                            <div class="progress-track" style="flex:1;height:5px"><div class="progress-fill" style="width:${pct}%;background:${barColor}"></div></div>
+                            <span style="font-weight:700;color:${barColor};width:30px;text-align:right">${pct}%</span>
+                        </div>
+                    </td>
+                    <td style="padding:4px 8px">${certHtml}</td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+        </table>`;
+    },
+
+    _toggleProgressDetail(rowId) {
+        const row = document.getElementById(rowId);
+        if(row) row.classList.toggle('hidden');
+    },
+
+    async renderAdminProgress() {
+        this._resetContainerStyles();
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:'Progresso'})+`
+            <div class="card" style="margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+                <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
+                <select id="prog-team-filter" class="form-control" style="max-width:260px;width:auto">
+                    <option value="">Todas as equipes</option>
+                </select>
+            </div>
+            <div class="card" style="overflow-x:auto;padding:0">
+                <table id="progress-table">
+                    <thead><tr><th>Pessoa</th><th>E-mail</th><th>Equipe</th><th>Cargo</th><th>Progresso Geral</th><th>Cursos</th></tr></thead>
+                    <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
+                </table>
+            </div>`;
+
+        let allMembers = [];
+        try {
+            const res = await fetch('/team/progress', {headers:this.apiHeaders()});
+            allMembers = res.ok ? await res.json() : [];
+        } catch(e) { console.error('Erro ao carregar progresso:', e); }
+
+        const filterSel = document.getElementById('prog-team-filter');
+        const teamsSeen = new Map();
+        allMembers.forEach(m=>{ if(m.team_id!=null) teamsSeen.set(m.team_id, m.team_name); });
+        [...teamsSeen.entries()].sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).forEach(([id,name])=>{
+            filterSel.innerHTML += `<option value="${id}">${name}</option>`;
+        });
+
+        const renderRows = (teamId) => {
+            const tbody=document.querySelector('#progress-table tbody'); tbody.innerHTML='';
+            const filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
+            if(!filtered.length){
+                tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📊</div><p>Nenhuma pessoa encontrada.</p></div></td></tr>';
+                return;
+            }
+            filtered.forEach(u=>{
+                const pct=u.percent||0;
+                const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                tbody.innerHTML+=`<tr>
+                    <td><strong>${u.username}</strong></td>
+                    <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
+                    <td style="font-size:0.82rem">${u.team_name||'—'}</td>
+                    <td style="font-size:0.82rem">${u.role}</td>
+                    <td style="min-width:140px">
+                        <div style="display:flex;align-items:center;gap:0.5rem">
+                            <div class="progress-track" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%;background:${barColor}"></div></div>
+                            <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
+                        </div>
+                    </td>
+                    <td>${this.actionBtn(`Cursos (${u.enrollments})`,`App._toggleProgressDetail('ap-row-${u.user_id}')`)}</td>
+                </tr>
+                <tr id="ap-row-${u.user_id}" class="hidden"><td colspan="6" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
+            });
+        };
+        renderRows('');
+        filterSel.onchange = () => renderRows(filterSel.value);
+    },
+
     async renderAdminDashboard() {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
@@ -80,8 +177,8 @@ Object.assign(App, {
             </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="team-table">
-                    <thead><tr><th>Colaborador</th><th>E-mail</th><th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Ações</th></tr></thead>
-                    <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
+                    <thead><tr><th>Colaborador</th><th>E-mail</th><th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Cursos</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="7" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
         try {
@@ -90,7 +187,7 @@ Object.assign(App, {
             const members=await res.json();
             const tbody=document.querySelector('#team-table tbody'); tbody.innerHTML='';
             if(!members.length){
-                tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>';
+                tbody.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>';
                 ['ts-members','ts-done','ts-pct'].forEach(id=>document.getElementById(id).textContent='0');
                 return;
             }
@@ -115,8 +212,10 @@ Object.assign(App, {
                             <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
                         </div>
                     </td>
+                    <td>${this.actionBtn(`Cursos (${u.enrollments})`,`App._toggleProgressDetail('lp-row-${u.user_id}')`)}</td>
                     <td>${this.actionBtn('🎯 Atribuir Curso',`App.showAssignCourseModal(${u.user_id},'${u.username}')`)}</td>
-                </tr>`;
+                </tr>
+                <tr id="lp-row-${u.user_id}" class="hidden"><td colspan="7" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
             });
         } catch(e) { console.error('Erro ao carregar equipe:', e); }
     },

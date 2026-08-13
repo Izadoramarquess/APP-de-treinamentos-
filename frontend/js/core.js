@@ -117,7 +117,8 @@ const App = {
                 <a class="nav-link" onclick="App.renderAdminUsers()">Usuários</a>
                 <a class="nav-link" onclick="App.renderAdminInvites()">Convites</a>
                 <a class="nav-link" onclick="App.renderAdminTeams()">Equipes</a>
-                <a class="nav-link" onclick="App.renderAdminCourses()">Cursos</a>`;
+                <a class="nav-link" onclick="App.renderAdminCourses()">Cursos</a>
+                <a class="nav-link" onclick="App.renderAdminProgress()">Progresso</a>`;
         } else if (role === 'lideranca') {
             navHtml = `
                 <a class="nav-link" onclick="App.renderLeaderDashboard()">Minha Equipe</a>
