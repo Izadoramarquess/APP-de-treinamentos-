@@ -131,12 +131,21 @@ def get_team_progress(
                 models.Certificate.user_id == member.id,
                 models.Certificate.course_id == course.id
             ).first()
+            # Status do curso — progresso não é "quantos módulos assistiu",
+            # é em qual desses 3 estados o curso está pra essa pessoa.
+            if c_done == 0:
+                course_status = "matriculado"
+            elif c_done < c_total:
+                course_status = "em_andamento"
+            else:
+                course_status = "finalizado"
             courses_detail.append({
                 "course_id": course.id,
                 "course_title": course.title,
                 "total": c_total,
                 "completed": c_done,
                 "percent": round((c_done / c_total * 100) if c_total > 0 else 0),
+                "status": course_status,
                 "certificate_issued": cert is not None,
                 "certificate_expires_at": iso_utc(cert.expires_at) if cert else None,
             })

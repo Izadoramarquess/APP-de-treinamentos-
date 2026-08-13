@@ -51,6 +51,29 @@ const App = {
         return `<span style="padding:3px 10px;border-radius:20px;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${c.color};background:${c.color}18;border:1px solid ${c.color}35">${c.label}</span>`;
     },
 
+    // Progresso é medido em estado do curso, não em módulo assistido.
+    _courseStatusBadge(status) {
+        const map = {
+            matriculado:  { label: 'Matriculado',  color: '#6b7280' },
+            em_andamento: { label: 'Em andamento', color: '#f59e0b' },
+            finalizado:   { label: 'Finalizado',   color: '#22c55e' },
+        };
+        return map[status] || map.matriculado;
+    },
+
+    // Vencimento de certificado — mesmo cálculo usado em toda tela que
+    // mostra certificado (aluno, liderança, admin), pra não divergir.
+    CERT_EXPIRING_SOON_DAYS: 30,
+    _certificateStatusInfo(expiresAt) {
+        if (!expiresAt) return null;
+        const now = new Date();
+        const exp = new Date(expiresAt);
+        const daysLeft = Math.ceil((exp - now) / (1000*60*60*24));
+        if (daysLeft < 0) return { state:'vencido', label:'⚠️ Vencido', color:'#ef4444', daysLeft };
+        if (daysLeft <= this.CERT_EXPIRING_SOON_DAYS) return { state:'vencendo', label:`⚠️ Vence em ${daysLeft}d`, color:'#f59e0b', daysLeft };
+        return { state:'valido', label:'✓ Válido', color:'#22c55e', daysLeft };
+    },
+
     actionBtn(label, onclick, variant='outline') {
         const s = {
             outline:  'background:transparent;border:1px solid var(--border);color:var(--text-dim)',

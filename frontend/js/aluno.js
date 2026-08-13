@@ -26,8 +26,11 @@ Object.assign(App, {
         grid.innerHTML = courses.map((c,i) => {
             const {completed,total,percent}=summaries[i];
             const fillColor=percent===100?'#22c55e':'var(--primary-light)';
+            const courseStatus = completed===0 ? 'matriculado' : (percent===100 ? 'finalizado' : 'em_andamento');
+            const st=this._courseStatusBadge(courseStatus);
             return `<div class="path-card">
                 <div class="path-icon" style="background:linear-gradient(135deg,#1e40af,#3b82f6)">🎓</div>
+                <span style="align-self:flex-start;padding:2px 9px;border-radius:12px;font-size:0.7rem;font-weight:700;color:${st.color};background:${st.color}18;margin-bottom:0.4rem">${st.label}</span>
                 <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.title}</h3>
                 <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 0.75rem;line-height:1.5">${c.description||''}</p>
                 <div style="margin-bottom:0.75rem">
@@ -270,19 +273,19 @@ Object.assign(App, {
         wrapper.innerHTML=`<div class="grid">` + certs.map(c=>{
             const issued=c.issued_at?new Date(c.issued_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
             const expires=c.expires_at?new Date(c.expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):null;
-            const expired=expires&&new Date(c.expires_at)<new Date();
+            const info=this._certificateStatusInfo(c.expires_at);
             return `<div class="card" style="display:flex;flex-direction:column;gap:0.75rem">
                 <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#fbbf24);display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏆</div>
                 <div>
                     <h3 style="margin:0 0 0.25rem;font-size:1rem;color:var(--primary)">${c.course_title}</h3>
                     <p style="font-size:0.82rem;color:var(--text-dim);margin:0">Emitido em ${issued}</p>
-                    <p style="font-size:0.78rem;margin:0.2rem 0 0;color:${expired?'#ef4444':'var(--text-dim)'}">
-                        ${expired?'⚠️ Expirado em':'Válido até'} ${expires}
+                    <p style="font-size:0.78rem;margin:0.2rem 0 0;color:${info?info.color:'var(--text-dim)'}">
+                        ${info&&info.state==='vencido'?'⚠️ Expirado em':'Válido até'} ${expires}
                     </p>
                 </div>
-                ${expired
-                    ? `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:#ef4444;background:#ef444418;border:1px solid #ef444435;align-self:flex-start">Expirado</span>`
-                    : `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:#22c55e;background:#22c55e18;border:1px solid #22c55e35;align-self:flex-start">✓ Válido</span>`
+                ${info
+                    ? `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:${info.color};background:${info.color}18;border:1px solid ${info.color}35;align-self:flex-start">${info.label}</span>`
+                    : ''
                 }
             </div>`;
         }).join('') + `</div>`;

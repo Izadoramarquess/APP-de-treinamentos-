@@ -9,6 +9,7 @@ Object.assign(App, {
         return `<table style="width:100%;font-size:0.8rem;border-collapse:collapse">
             <thead><tr style="color:var(--text-dim);text-align:left">
                 <th style="padding:4px 8px;font-weight:600">Curso</th>
+                <th style="padding:4px 8px;font-weight:600">Status</th>
                 <th style="padding:4px 8px;font-weight:600">Progresso</th>
                 <th style="padding:4px 8px;font-weight:600">Certificado</th>
             </tr></thead>
@@ -16,11 +17,18 @@ Object.assign(App, {
             ${courses.map(c=>{
                 const pct=c.percent||0;
                 const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
-                const certHtml = c.certificate_issued
-                    ? `<span style="color:#16a34a;font-weight:600">✓ Emitido${c.certificate_expires_at?' · até '+new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):''}</span>`
-                    : `<span style="color:var(--text-dim)">—</span>`;
+                const st=this._courseStatusBadge(c.status);
+                let certHtml = `<span style="color:var(--text-dim)">—</span>`;
+                if(c.certificate_issued){
+                    const info=this._certificateStatusInfo(c.certificate_expires_at);
+                    const dateStr = c.certificate_expires_at ? new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '';
+                    certHtml = info
+                        ? `<span style="color:${info.color};font-weight:600">${info.label}${dateStr?' · até '+dateStr:''}</span>`
+                        : `<span style="color:#16a34a;font-weight:600">✓ Emitido</span>`;
+                }
                 return `<tr>
                     <td style="padding:4px 8px">${c.course_title}</td>
+                    <td style="padding:4px 8px"><span style="padding:2px 8px;border-radius:12px;font-size:0.72rem;font-weight:700;color:${st.color};background:${st.color}18">${st.label}</span></td>
                     <td style="padding:4px 8px;min-width:140px">
                         <div style="display:flex;align-items:center;gap:0.5rem">
                             <div class="progress-track" style="flex:1;height:5px"><div class="progress-fill" style="width:${pct}%;background:${barColor}"></div></div>
@@ -34,6 +42,14 @@ Object.assign(App, {
         </table>`;
     },
 
+    // Conta quantos cursos, em cada bucket courses[] de um grupo de pessoas,
+    // estão em cada estado — usado nos cards de resumo de Progresso/Equipe.
+    _countCourseStatuses(members) {
+        const counts={matriculado:0, em_andamento:0, finalizado:0};
+        members.forEach(u=>(u.courses||[]).forEach(c=>{ if(counts[c.status]!==undefined) counts[c.status]++; }));
+        return counts;
+    },
+
     _toggleProgressDetail(rowId) {
         const row = document.getElementById(rowId);
         if(row) row.classList.toggle('hidden');
@@ -43,6 +59,11 @@ Object.assign(App, {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Progresso'})+`
+            <div class="grid-stats" id="prog-stats" style="margin-bottom:1rem">
+                <div class="stat-card"><div class="stat-icon">📥</div><div class="stat-info"><div class="stat-value" id="pg-matriculado">—</div><div class="stat-label">Matriculados</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="pg-andamento">—</div><div class="stat-label">Em Andamento</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="pg-finalizado">—</div><div class="stat-label">Finalizados</div></div></div>
+            </div>
             <div class="card" style="margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
                 <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
                 <select id="prog-team-filter" class="form-control" style="max-width:260px;width:auto">
@@ -72,6 +93,10 @@ Object.assign(App, {
         const renderRows = (teamId) => {
             const tbody=document.querySelector('#progress-table tbody'); tbody.innerHTML='';
             const filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
+            const counts=this._countCourseStatuses(filtered);
+            document.getElementById('pg-matriculado').textContent=counts.matriculado;
+            document.getElementById('pg-andamento').textContent=counts.em_andamento;
+            document.getElementById('pg-finalizado').textContent=counts.finalizado;
             if(!filtered.length){
                 tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📊</div><p>Nenhuma pessoa encontrada.</p></div></td></tr>';
                 return;
@@ -107,7 +132,7 @@ Object.assign(App, {
                 <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="s-users">—</div><div class="stat-label">Usuários Ativos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="s-courses">—</div><div class="stat-label">Cursos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="s-modules">—</div><div class="stat-label">Módulos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="s-completions">—</div><div class="stat-label">Conclusões</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="s-completions">—</div><div class="stat-label">Cursos Finalizados</div></div></div>
                 <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="s-pending">—</div><div class="stat-label">Aprovações Pendentes</div></div></div>
                 <div class="stat-card"><div class="stat-icon">📬</div><div class="stat-info"><div class="stat-value" id="s-invites">—</div><div class="stat-label">Convites Pendentes</div></div></div>
             </div>
@@ -134,7 +159,7 @@ Object.assign(App, {
             document.getElementById('s-users').textContent      = stats.total_users      ?? '—';
             document.getElementById('s-courses').textContent    = stats.total_courses    ?? '—';
             document.getElementById('s-modules').textContent    = stats.total_modules    ?? '—';
-            document.getElementById('s-completions').textContent= stats.completions      ?? '0';
+            document.getElementById('s-completions').textContent= stats.courses_completed ?? '0';
             document.getElementById('s-pending').textContent    = stats.pending_users    ?? '0';
             document.getElementById('s-invites').textContent    = stats.pending_invites  ?? '0';
 
@@ -172,8 +197,8 @@ Object.assign(App, {
         container.innerHTML=this.sectionHeader({title:'Minha Equipe',actionLabel:'+ Convidar Colaborador',actionFn:'App.showInviteUserModal()'})+`
             <div class="grid-stats" id="team-stats" style="margin-bottom:1.5rem">
                 <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="ts-members">—</div><div class="stat-label">Membros Ativos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-done">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">📊</div><div class="stat-info"><div class="stat-value" id="ts-pct">—</div><div class="stat-label">Progresso Médio</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="ts-andamento">—</div><div class="stat-label">Cursos em Andamento</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-finalizado">—</div><div class="stat-label">Cursos Finalizados</div></div></div>
             </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="team-table">
@@ -188,14 +213,13 @@ Object.assign(App, {
             const tbody=document.querySelector('#team-table tbody'); tbody.innerHTML='';
             if(!members.length){
                 tbody.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>';
-                ['ts-members','ts-done','ts-pct'].forEach(id=>document.getElementById(id).textContent='0');
+                ['ts-members','ts-andamento','ts-finalizado'].forEach(id=>document.getElementById(id).textContent='0');
                 return;
             }
-            const totalDone=members.reduce((s,m)=>s+m.modules_done,0);
-            const avgPct=Math.round(members.reduce((s,m)=>s+m.percent,0)/members.length);
+            const statusCounts=this._countCourseStatuses(members);
             document.getElementById('ts-members').textContent=members.length;
-            document.getElementById('ts-done').textContent=totalDone;
-            document.getElementById('ts-pct').textContent=avgPct+'%';
+            document.getElementById('ts-andamento').textContent=statusCounts.em_andamento;
+            document.getElementById('ts-finalizado').textContent=statusCounts.finalizado;
             members.forEach(u=>{
                 const pct=u.percent||0;
                 const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
@@ -226,8 +250,8 @@ Object.assign(App, {
         container.innerHTML=this.sectionHeader({title:`Olá, ${this.user.username}! 👋`})+`
             <div class="grid-stats">
                 <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="sd-courses">—</div><div class="stat-label">Cursos Matriculados</div></div></div>
-                <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="sd-modules">—</div><div class="stat-label">Total de Módulos</div></div></div>
-                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="sd-done">—</div><div class="stat-label">Módulos Concluídos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="sd-andamento">—</div><div class="stat-label">Em Andamento</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="sd-finalizado">—</div><div class="stat-label">Finalizados</div></div></div>
                 <div class="stat-card"><div class="stat-icon">🏆</div><div class="stat-info"><div class="stat-value" id="sd-certs">—</div><div class="stat-label">Certificados</div></div></div>
             </div>
             <h3 style="margin-bottom:1rem;color:var(--primary);font-size:1.1rem">Meus Cursos</h3>
@@ -243,7 +267,7 @@ Object.assign(App, {
         document.getElementById('sd-courses').textContent=courses.length;
         document.getElementById('sd-certs').textContent=certs.length;
 
-        let totalModules=0, totalDone=0;
+        let countAndamento=0, countFinalizado=0;
         const grid=document.getElementById('dash-courses'); grid.innerHTML='';
 
         if(!courses.length){
@@ -252,8 +276,8 @@ Object.assign(App, {
                 <p>Você ainda não está matriculado em nenhum curso.</p>
                 <p style="font-size:0.85rem;margin-top:0.5rem">Entre em contato com seu líder ou administrador.</p>
             </div>`;
-            document.getElementById('sd-modules').textContent='0';
-            document.getElementById('sd-done').textContent='0';
+            document.getElementById('sd-andamento').textContent='0';
+            document.getElementById('sd-finalizado').textContent='0';
             return;
         }
 
@@ -267,12 +291,15 @@ Object.assign(App, {
         }));
         grid.innerHTML = courses.map((c,i) => {
             const progData=progDataList[i];
-            totalModules+=progData.total;
-            totalDone+=progData.completed;
             const pct=progData.percent||0;
+            const courseStatus = progData.completed===0 ? 'matriculado' : (pct===100 ? 'finalizado' : 'em_andamento');
+            if(courseStatus==='em_andamento') countAndamento++;
+            else if(courseStatus==='finalizado') countFinalizado++;
+            const st=this._courseStatusBadge(courseStatus);
             const fillColor=pct===100?'#22c55e':'var(--primary-light)';
             return `<div class="path-card">
                 <div class="path-icon">📚</div>
+                <span style="align-self:flex-start;padding:2px 9px;border-radius:12px;font-size:0.7rem;font-weight:700;color:${st.color};background:${st.color}18;margin-bottom:0.4rem">${st.label}</span>
                 <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.title}</h3>
                 <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1rem;line-height:1.5">${c.description||''}</p>
                 <div style="margin-bottom:0.75rem">
@@ -287,7 +314,7 @@ Object.assign(App, {
                 </button>
             </div>`;
         }).join('');
-        document.getElementById('sd-modules').textContent=totalModules;
-        document.getElementById('sd-done').textContent=totalDone;
+        document.getElementById('sd-andamento').textContent=countAndamento;
+        document.getElementById('sd-finalizado').textContent=countFinalizado;
     },
 });

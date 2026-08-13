@@ -26,14 +26,16 @@ def dashboard_stats(
     pending_users  = db.query(models.User).filter(models.User.status == "pending").count()
     total_courses  = db.query(models.Course).count()
     total_modules  = db.query(models.Module).count()
-    completions    = db.query(models.ModuleProgress).filter(models.ModuleProgress.is_completed == True).count()
+    # Progresso é medido em curso concluído (certificado emitido), não em
+    # módulo assistido — um curso só "conta" quando termina de verdade.
+    courses_completed = db.query(models.Certificate).count()
     pending_invites= db.query(models.User).filter(models.User.status == "convite_pendente").count()
     return {
         "total_users": total_users,
         "pending_users": pending_users,
         "total_courses": total_courses,
         "total_modules": total_modules,
-        "completions": completions,
+        "courses_completed": courses_completed,
         "pending_invites": pending_invites
     }
 
