@@ -5,14 +5,14 @@ import secrets
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
 import auth
 import email_utils
 from auth import get_password_hash
-from deps import get_db, authorize, iso_utc, DEFAULT_DEPARTMENT
+from deps import get_db, authorize, iso_utc, DEFAULT_DEPARTMENT, check_upload_size
 
 router = APIRouter()
 
@@ -123,6 +123,44 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     db.commit()
     return {"message": "Usuário excluído com sucesso"}
 
+def _create_invite_record(db: Session, username: str, email: str, role: str, department: Optional[str], team_id: Optional[int], invited_by_id: int) -> dict:
+    """Núcleo compartilhado entre o convite avulso (/admin/users/invite) e a
+    importação em lote (/admin/users/bulk-invite) — mesma validação, mesmo
+    e-mail, um único lugar pra manter certo."""
+    if role == "admin" and not auth.is_allowed_email_domain(email):
+        raise ValueError("Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+
+    existing_user = db.query(models.User).filter(models.User.email == email).first()
+    if existing_user:
+        raise ValueError("E-mail já cadastrado no sistema.")
+
+    invite_token = secrets.token_urlsafe(32)
+    db_user = models.User(
+        username=username,
+        email=email,
+        hashed_password=get_password_hash(uuid.uuid4().hex),
+        role=role,
+        department=(department or "").strip() or DEFAULT_DEPARTMENT,
+        team_id=team_id if team_id else auth.get_default_team(db).id,
+        status="convite_pendente",
+        invite_token=invite_token,
+        invite_expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=7),
+        invited_by_id=invited_by_id
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    invite_link = f"{base_url}/?view=convite&token={invite_token}"
+    email_sent = email_utils.send_email(
+        db, email, "Convite — Plataforma GeoTrilha",
+        email_utils.render_template("invite_generic.html", link_convite=invite_link),
+        "invite"
+    )
+    return {"invite_link": invite_link, "email_sent": email_sent}
+
+
 @router.post("/admin/users/invite")
 def invite_user_admin(
     username: str = Form(...),
@@ -136,42 +174,50 @@ def invite_user_admin(
     if current_user.role == "lideranca":
         team_id = current_user.team_id
         role = "usuario"
+    try:
+        return _create_invite_record(db, username, email, role, department, team_id, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    if role == "admin" and not auth.is_allowed_email_domain(email):
-        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
 
-    existing_user = db.query(models.User).filter(models.User.email == email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="E-mail já cadastrado no sistema.")
+@router.post("/admin/users/bulk-invite")
+async def bulk_invite_users(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin"]))
+):
+    """CSV com colunas username,email,department,role,team (team e role são
+    opcionais — role vira 'usuario' e team vira a equipe padrão se vazios).
+    Processa linha a linha; uma linha com erro não derruba as outras."""
+    import csv
+    import io
 
-    invite_token = secrets.token_urlsafe(32)
+    check_upload_size(file.size or 0)
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(raw))
+    required_cols = {"username", "email"}
+    if not reader.fieldnames or not required_cols.issubset({f.strip().lower() for f in reader.fieldnames}):
+        raise HTTPException(status_code=400, detail="CSV precisa ter, no mínimo, as colunas: username,email")
 
-    db_user = models.User(
-        username=username,
-        email=email,
-        hashed_password=get_password_hash(uuid.uuid4().hex),
-        role=role,
-        department=(department or "").strip() or DEFAULT_DEPARTMENT,
-        team_id=team_id if team_id else auth.get_default_team(db).id,
-        status="convite_pendente",
-        invite_token=invite_token,
-        invite_expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=7),
-        invited_by_id=current_user.id
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    teams_by_name = {t.name.strip().lower(): t.id for t in db.query(models.Team).all()}
+    results = []
+    for i, row in enumerate(reader, start=2):  # linha 1 é o cabeçalho
+        row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        username = row.get("username", "")
+        email = row.get("email", "")
+        if not username or not email:
+            results.append({"line": i, "email": email or "—", "status": "erro", "detail": "username e email são obrigatórios"})
+            continue
+        role = row.get("role") or "usuario"
+        team_id = teams_by_name.get((row.get("team") or "").strip().lower())
+        try:
+            invite = _create_invite_record(db, username, email, role, row.get("department"), team_id, current_user.id)
+            results.append({"line": i, "email": email, "status": "ok", "invite_link": invite["invite_link"], "email_sent": invite["email_sent"]})
+        except ValueError as e:
+            results.append({"line": i, "email": email, "status": "erro", "detail": str(e)})
 
-    base_url = os.getenv("BASE_URL", "http://localhost:8000")
-    invite_link = f"{base_url}/?view=convite&token={invite_token}"
-
-    email_sent = email_utils.send_email(
-        db, email, "Convite — Plataforma GeoTrilha",
-        email_utils.render_template("invite_generic.html", link_convite=invite_link),
-        "invite"
-    )
-
-    return {"invite_link": invite_link, "email_sent": email_sent}
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    return {"total": len(results), "created": ok_count, "errors": len(results) - ok_count, "results": results}
 
 @router.post("/enrollments", response_model=models.EnrollmentSchema)
 def enroll_user(

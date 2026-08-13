@@ -235,6 +235,22 @@ def init_db():
                         conn.execute(text("UPDATE certificates SET course_id = :cid WHERE id = :id"), {"cid": course_id, "id": cert_id})
                     conn.commit()
 
+    # Colunas de dedupe do job de e-mail automático (lembrete de curso parado
+    # e aviso de certificado vencendo) — sem elas o job manda o mesmo e-mail
+    # de novo toda vez que roda.
+    if "enrollments" in inspector.get_table_names():
+        with engine.connect() as conn:
+            enr_columns = [c['name'] for c in inspector.get_columns('enrollments')]
+            if 'reminder_sent' not in enr_columns:
+                conn.execute(text("ALTER TABLE enrollments ADD COLUMN reminder_sent BOOLEAN DEFAULT 0"))
+                conn.commit()
+    if "certificates" in inspector.get_table_names():
+        with engine.connect() as conn:
+            cert_columns = [c['name'] for c in inspector.get_columns('certificates')]
+            if 'expiry_reminder_sent' not in cert_columns:
+                conn.execute(text("ALTER TABLE certificates ADD COLUMN expiry_reminder_sent BOOLEAN DEFAULT 0"))
+                conn.commit()
+
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
     

@@ -101,6 +101,9 @@ class Enrollment(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     course_id = Column(Integer, ForeignKey("courses.id"))
     enrolled_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Marca se já mandamos o lembrete de "curso parado" pra essa matrícula —
+    # sem isso o job diário mandaria o mesmo e-mail toda vez que rodasse.
+    reminder_sent = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="enrollments")
     course = relationship("Course", back_populates="enrollments")
@@ -127,6 +130,9 @@ class Certificate(Base):
     file_url = Column(String)
     issued_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
+    # Idem — evita reenviar o aviso de vencimento todo dia depois que já
+    # entrou na janela de "vence em breve" uma vez.
+    expiry_reminder_sent = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="certificates")
     course = relationship("Course", back_populates="certificates")

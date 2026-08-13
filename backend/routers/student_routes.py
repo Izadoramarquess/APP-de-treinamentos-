@@ -2,11 +2,12 @@
 import datetime
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 import models
 from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate
+from certificate_pdf import generate_certificate_pdf
 
 router = APIRouter()
 
@@ -147,6 +148,7 @@ def get_team_progress(
                 "percent": round((c_done / c_total * 100) if c_total > 0 else 0),
                 "status": course_status,
                 "certificate_issued": cert is not None,
+                "certificate_id": cert.id if cert else None,
                 "certificate_expires_at": iso_utc(cert.expires_at) if cert else None,
             })
 
@@ -200,3 +202,38 @@ def get_my_certificates(
             "file_url": c.file_url
         })
     return result
+
+@router.get("/certificates/{certificate_id}/download")
+def download_certificate(
+    certificate_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """PDF gerado na hora a partir dos dados do certificado — não fica nada
+    persistido em disco. Dono do certificado sempre pode baixar; admin pode
+    baixar qualquer um; liderança só os da própria equipe."""
+    cert = db.query(models.Certificate).filter(models.Certificate.id == certificate_id).first()
+    if not cert:
+        raise HTTPException(404, "Certificado não encontrado")
+
+    owner = db.query(models.User).filter(models.User.id == cert.user_id).first()
+    is_owner = current_user.id == cert.user_id
+    is_admin = current_user.role == "admin"
+    is_leader_of_owner = current_user.role == "lideranca" and owner and owner.team_id == current_user.team_id
+    if not (is_owner or is_admin or is_leader_of_owner):
+        raise HTTPException(403, "Sem permissão para baixar este certificado")
+
+    course = db.query(models.Course).filter(models.Course.id == cert.course_id).first()
+    pdf_bytes = generate_certificate_pdf(
+        username=owner.username if owner else "—",
+        course_title=course.title if course else "—",
+        issued_at=cert.issued_at,
+        expires_at=cert.expires_at,
+        certificate_template_url=course.certificate_template_url if course else None,
+    )
+    safe_course_name = "".join(ch if ch.isalnum() else "_" for ch in (course.title if course else "certificado"))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="certificado_{safe_course_name}.pdf"'}
+    )

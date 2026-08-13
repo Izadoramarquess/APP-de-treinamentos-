@@ -74,6 +74,44 @@ const App = {
         return { state:'valido', label:'✓ Válido', color:'#22c55e', daysLeft };
     },
 
+    // O endpoint exige Bearer token, então não dá pra usar <a href> direto
+    // — busca como blob e dispara o download via link temporário.
+    async _downloadCertificate(certificateId, btnEl) {
+        const originalText = btnEl ? btnEl.textContent : null;
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Gerando...'; }
+        try {
+            const res = await fetch(`/certificates/${certificateId}/download`, { headers: this.apiHeaders() });
+            if (!res.ok) throw new Error('download falhou');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `certificado_${certificateId}.pdf`;
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            alert('Não foi possível baixar o certificado.');
+        } finally {
+            if (btnEl) { btnEl.disabled = false; btnEl.textContent = originalText; }
+        }
+    },
+
+    // CSV com separador ";" (Excel PT-BR abre certo) e BOM pra acentuação.
+    _downloadCsv(filename, headers, rows) {
+        const esc = (v) => {
+            const s = String(v ?? '');
+            return /[",\n;]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+        };
+        const lines = [headers.map(esc).join(';'), ...rows.map(r=>r.map(esc).join(';'))];
+        const csv = '﻿' + lines.join('\r\n');
+        const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+    },
+
     actionBtn(label, onclick, variant='outline') {
         const s = {
             outline:  'background:transparent;border:1px solid var(--border);color:var(--text-dim)',

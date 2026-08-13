@@ -283,10 +283,13 @@ Object.assign(App, {
                         ${info&&info.state==='vencido'?'⚠️ Expirado em':'Válido até'} ${expires}
                     </p>
                 </div>
-                ${info
-                    ? `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:${info.color};background:${info.color}18;border:1px solid ${info.color}35;align-self:flex-start">${info.label}</span>`
-                    : ''
-                }
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
+                    ${info
+                        ? `<span style="padding:4px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;color:${info.color};background:${info.color}18;border:1px solid ${info.color}35">${info.label}</span>`
+                        : `<span></span>`
+                    }
+                    <button onclick="App._downloadCertificate(${c.certificate_id}, this)" style="padding:5px 12px;border-radius:6px;font-size:0.78rem;cursor:pointer;background:var(--primary-light);border:none;color:white;font-family:Outfit,sans-serif;font-weight:600">⬇ Baixar PDF</button>
+                </div>
             </div>`;
         }).join('') + `</div>`;
     },

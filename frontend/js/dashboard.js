@@ -22,9 +22,12 @@ Object.assign(App, {
                 if(c.certificate_issued){
                     const info=this._certificateStatusInfo(c.certificate_expires_at);
                     const dateStr = c.certificate_expires_at ? new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '';
-                    certHtml = info
-                        ? `<span style="color:${info.color};font-weight:600">${info.label}${dateStr?' · até '+dateStr:''}</span>`
-                        : `<span style="color:#16a34a;font-weight:600">✓ Emitido</span>`;
+                    const label = info ? `${info.label}${dateStr?' · até '+dateStr:''}` : '✓ Emitido';
+                    const color = info ? info.color : '#16a34a';
+                    certHtml = `<span style="display:inline-flex;align-items:center;gap:6px">
+                        <span style="color:${color};font-weight:600">${label}</span>
+                        <button onclick="App._downloadCertificate(${c.certificate_id}, this)" style="padding:2px 8px;border-radius:6px;font-size:0.7rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif">⬇ PDF</button>
+                    </span>`;
                 }
                 return `<tr>
                     <td style="padding:4px 8px">${c.course_title}</td>
@@ -50,6 +53,24 @@ Object.assign(App, {
         return counts;
     },
 
+    // Achata members[] (com courses[] aninhado) numa linha por (pessoa, curso)
+    // pro CSV — pessoa sem nenhum curso ainda vira uma linha em branco.
+    _exportProgressCsv(members, filename) {
+        const headers=['Pessoa','E-mail','Equipe','Cargo','Curso','Status','Progresso (%)','Certificado','Validade do Certificado'];
+        const rows=[];
+        members.forEach(u=>{
+            if(!u.courses || !u.courses.length){
+                rows.push([u.username,u.email,u.team_name||'',u.role,'','','','','']);
+                return;
+            }
+            u.courses.forEach(c=>{
+                const certDate=c.certificate_expires_at?new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'';
+                rows.push([u.username,u.email,u.team_name||'',u.role,c.course_title,this._courseStatusBadge(c.status).label,c.percent,c.certificate_issued?'Sim':'Não',certDate]);
+            });
+        });
+        this._downloadCsv(filename, headers, rows);
+    },
+
     _toggleProgressDetail(rowId) {
         const row = document.getElementById(rowId);
         if(row) row.classList.toggle('hidden');
@@ -69,6 +90,7 @@ Object.assign(App, {
                 <select id="prog-team-filter" class="form-control" style="max-width:260px;width:auto">
                     <option value="">Todas as equipes</option>
                 </select>
+                <button id="prog-export-btn" style="margin-left:auto;padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬇ Exportar CSV</button>
             </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="progress-table">
@@ -90,9 +112,13 @@ Object.assign(App, {
             filterSel.innerHTML += `<option value="${id}">${name}</option>`;
         });
 
+        let currentFiltered = allMembers;
+        document.getElementById('prog-export-btn').onclick = () => this._exportProgressCsv(currentFiltered, 'progresso.csv');
+
         const renderRows = (teamId) => {
             const tbody=document.querySelector('#progress-table tbody'); tbody.innerHTML='';
             const filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
+            currentFiltered = filtered;
             const counts=this._countCourseStatuses(filtered);
             document.getElementById('pg-matriculado').textContent=counts.matriculado;
             document.getElementById('pg-andamento').textContent=counts.em_andamento;
@@ -200,6 +226,9 @@ Object.assign(App, {
                 <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="ts-andamento">—</div><div class="stat-label">Cursos em Andamento</div></div></div>
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-finalizado">—</div><div class="stat-label">Cursos Finalizados</div></div></div>
             </div>
+            <div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">
+                <button id="team-export-btn" style="padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬇ Exportar CSV</button>
+            </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="team-table">
                     <thead><tr><th>Colaborador</th><th>E-mail</th><th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Cursos</th><th>Ações</th></tr></thead>
@@ -220,6 +249,7 @@ Object.assign(App, {
             document.getElementById('ts-members').textContent=members.length;
             document.getElementById('ts-andamento').textContent=statusCounts.em_andamento;
             document.getElementById('ts-finalizado').textContent=statusCounts.finalizado;
+            document.getElementById('team-export-btn').onclick=()=>this._exportProgressCsv(members, 'minha_equipe.csv');
             members.forEach(u=>{
                 const pct=u.percent||0;
                 const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';

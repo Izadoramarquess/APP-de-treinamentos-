@@ -6,6 +6,10 @@ Object.assign(App, {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Gestão de Usuários',actionLabel:'+ Convidar Usuário',actionFn:'App.showInviteUserModal()'})+`
+            <div style="display:flex;gap:0.75rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap">
+                <input type="text" id="u-search" class="form-control" placeholder="🔍 Buscar por nome ou e-mail..." style="max-width:320px">
+                <button onclick="App.showBulkImportModal()" style="margin-left:auto;padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬆ Importar CSV</button>
+            </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="u-table">
                     <thead><tr><th>Usuário</th><th>E-mail</th><th>Depto</th><th>Cargo</th><th>Status</th><th>Ações</th></tr></thead>
@@ -16,8 +20,14 @@ Object.assign(App, {
         const users=await res.json();
         const tbody=document.querySelector('#u-table tbody'); tbody.innerHTML='';
         if(!users.length){tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum usuário.</p></div></td></tr>';return;}
+        document.getElementById('u-search').oninput=(e)=>{
+            const q=e.target.value.trim().toLowerCase();
+            document.querySelectorAll('#u-table tbody tr[data-search]').forEach(tr=>{
+                tr.style.display = tr.dataset.search.includes(q) ? '' : 'none';
+            });
+        };
         users.forEach(u=>{
-            tbody.innerHTML+=`<tr>
+            tbody.innerHTML+=`<tr data-search="${(u.username+' '+u.email).toLowerCase()}">
                 <td><strong>${u.username}</strong></td>
                 <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
                 <td style="font-size:0.82rem;color:var(--text-dim)">${u.department||'—'}</td>
@@ -80,6 +90,54 @@ Object.assign(App, {
             const data=await res.json();
             if(res.ok){this.renderAdminUsers();this.showCopyLinkModal('Convite Gerado ✓','Envie este link para o novo usuário:',data.invite_link);}
             else{alert(data.detail||'Erro ao gerar convite.');btn.disabled=false;btn.textContent='Gerar convite';}
+        };
+        modal.classList.remove('hidden');
+    },
+
+    showBulkImportModal() {
+        const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
+        body.className='';
+        const templateCsv='username,email,department,role,team\r\njoao.silva,joao.silva@geobiogas.tech,Operações,usuario,\r\n';
+        body.innerHTML=`<h3 style="margin-bottom:0.5rem;color:var(--primary)">Importar Usuários (CSV)</h3>
+            <p style="color:var(--text-dim);font-size:0.83rem;margin-bottom:1rem">
+                Colunas: <code>username,email,department,role,team</code> — só <code>username</code> e <code>email</code> são obrigatórias.
+                <a href="#" id="bi-template-link" style="color:var(--primary-light)">Baixar modelo</a>
+            </p>
+            <form id="bulk-import-form">
+                <div class="form-group"><input type="file" id="bi-file" class="form-control" accept=".csv" required></div>
+                <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+                    <button type="submit" class="btn btn-primary" style="flex:1">Importar</button>
+                    <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
+                </div>
+            </form>
+            <div id="bi-results" style="margin-top:1rem;max-height:260px;overflow-y:auto"></div>`;
+        document.getElementById('bi-template-link').onclick=(e)=>{
+            e.preventDefault();
+            const blob=new Blob(['﻿'+templateCsv], {type:'text/csv;charset=utf-8;'});
+            const url=URL.createObjectURL(blob);
+            const a=document.createElement('a'); a.href=url; a.download='modelo_importacao_usuarios.csv';
+            document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        };
+        document.getElementById('bulk-import-form').onsubmit=async(e)=>{
+            e.preventDefault();
+            const fileInput=document.getElementById('bi-file');
+            if(!fileInput.files[0]) return;
+            const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Importando...';
+            const fd=new FormData(); fd.append('file', fileInput.files[0]);
+            const res=await fetch('/admin/users/bulk-invite',{method:'POST',headers:this.apiHeaders(),body:fd});
+            const data=await res.json();
+            const resultsEl=document.getElementById('bi-results');
+            if(!res.ok){
+                resultsEl.innerHTML=`<p style="color:#ef4444;font-size:0.85rem">${data.detail||'Erro ao importar.'}</p>`;
+                btn.disabled=false; btn.textContent='Importar';
+                return;
+            }
+            resultsEl.innerHTML=`<p style="font-weight:600;margin-bottom:0.5rem">${data.created} criado(s), ${data.errors} erro(s) de ${data.total} linha(s)</p>` +
+                data.results.map(r=>`<div style="padding:5px 8px;border-radius:6px;font-size:0.78rem;margin-bottom:3px;background:${r.status==='ok'?'#22c55e18':'#ef444418'};color:${r.status==='ok'?'#16a34a':'#dc2626'}">
+                    Linha ${r.line} — ${r.email}: ${r.status==='ok'?'✓ convite criado':'✗ '+r.detail}
+                </div>`).join('');
+            btn.textContent='Importar novamente'; btn.disabled=false;
+            if(data.created>0) this.renderAdminUsers();
         };
         modal.classList.remove('hidden');
     },
@@ -252,12 +310,19 @@ Object.assign(App, {
         this._resetContainerStyles(); this.currentCourse=null;
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Cursos',actionLabel:'+ Novo Curso',actionFn:'App.showCreateCourseModal()'})+
-            `<div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
+            `<div style="margin-bottom:1rem"><input type="text" id="c-search" class="form-control" placeholder="🔍 Buscar por título..." style="max-width:320px"></div>
+            <div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
         const res=await fetch('/courses',{headers:this.apiHeaders()}); const courses=await res.json();
         const wrapper=document.getElementById('courses-wrapper'); wrapper.innerHTML='';
         if(!courses.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso criado ainda.</p></div>';return;}
+        document.getElementById('c-search').oninput=(e)=>{
+            const q=e.target.value.trim().toLowerCase();
+            document.querySelectorAll('#courses-wrapper [data-search]').forEach(el=>{
+                el.style.display = el.dataset.search.includes(q) ? '' : 'none';
+            });
+        };
         courses.forEach(c=>{
-            wrapper.innerHTML+=`<div class="card" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
+            wrapper.innerHTML+=`<div class="card" data-search="${c.title.toLowerCase()}" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
                 <div style="flex:1;min-width:0">
                     <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.title}${c.is_standard_training?' <span style="font-size:0.65rem;font-weight:700;color:var(--primary-light);background:rgba(37,99,235,.1);padding:2px 8px;border-radius:20px;vertical-align:middle">PADRÃO</span>':''}</h3>
                     <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||'Sem descrição.'}</p>
