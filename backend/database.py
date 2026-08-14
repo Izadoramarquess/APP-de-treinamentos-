@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
@@ -20,7 +20,30 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 def init_db():
-    from sqlalchemy import inspect, text
+    """Roda uma vez por processo no startup do FastAPI. Sob gunicorn com
+    múltiplos workers (-w 4), isso significa várias cópias deste processo
+    rodando ao mesmo tempo contra o MESMO banco — sem serialização, dois
+    workers colidem tentando criar a mesma tabela ou inserir o mesmo usuário
+    'admin' simultaneamente, e o deploy inteiro cai (visto em produção:
+    UniqueViolation em pg_type_typname_nsp_index e em ix_users_username,
+    com a senha do admin às vezes nem chegando a aparecer no log porque o
+    worker que a gerou morria antes do commit). Um advisory lock do Postgres
+    resolve: só quem pega o lock roda de verdade — os outros esperam a
+    liberação e, quando a vez deles chega, todas as checagens idempotentes
+    abaixo já veem tudo pronto e não fazem nada. SQLite não precisa disso
+    (não há múltiplos processos concorrentes no dev local)."""
+    is_postgres = engine.dialect.name == "postgresql"
+    lock_conn = engine.connect() if is_postgres else None
+    if lock_conn is not None:
+        lock_conn.execute(text("SELECT pg_advisory_lock(727383001)"))
+    try:
+        _init_db_locked()
+    finally:
+        if lock_conn is not None:
+            lock_conn.execute(text("SELECT pg_advisory_unlock(727383001)"))
+            lock_conn.close()
+
+def _init_db_locked():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
@@ -283,6 +306,7 @@ def init_db():
         # no primeiro login (mesmo fluxo de must_change_password já usado
         # para reset de senha de outros usuários).
         admin_exists = db.query(models.User).filter(models.User.username == "admin").first()
+        new_admin_password = None
         if not admin_exists:
             initial_password = secrets.token_urlsafe(12)
             hashed_password = get_password_hash(initial_password)
@@ -297,11 +321,7 @@ def init_db():
                 must_change_password=True
             )
             db.add(admin_user)
-            print("=" * 60)
-            print("USUÁRIO ADMIN CRIADO — copie a senha agora, ela não será mostrada de novo:")
-            print(f"  usuário: admin")
-            print(f"  senha:   {initial_password}")
-            print("=" * 60)
+            new_admin_password = initial_password
 
         # Seed lider user
         lider_exists = db.query(models.User).filter(models.User.username == "lider").first()
@@ -325,5 +345,15 @@ def init_db():
             db.add(course)
 
         db.commit()
+
+        # Só imprime a senha depois do commit confirmar de verdade — se a
+        # senha aparecesse antes e o commit falhasse (ex.: corrida entre
+        # workers), o log mostraria uma senha de uma conta que não existe.
+        if new_admin_password:
+            print("=" * 60)
+            print("USUÁRIO ADMIN CRIADO — copie a senha agora, ela não será mostrada de novo:")
+            print(f"  usuário: admin")
+            print(f"  senha:   {new_admin_password}")
+            print("=" * 60)
     finally:
         db.close()
