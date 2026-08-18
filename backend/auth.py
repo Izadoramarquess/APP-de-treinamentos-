@@ -6,6 +6,7 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 import models
 from fastapi import HTTPException
@@ -160,17 +161,29 @@ def register_user(db: Session, user: UserCreate):
     return {"message": "Cadastro criado com sucesso. Aguardando aprovação do administrador."}
 
 def login_for_access_token(db: Session, form_data: LoginRequest):
-    _check_login_rate_limit(form_data.username)
+    # A tela de login diz "Usuário ou E-mail" (com um e-mail de exemplo no
+    # placeholder), então o backend precisa aceitar os dois — só aceitar
+    # username fazia qualquer pessoa que digitasse o e-mail (exatamente o
+    # que a tela sugere) cair em "Usuário ou senha incorretos" mesmo com a
+    # senha certa. Também tolera diferença de maiúscula/minúscula e espaços
+    # extras (copiar e colar de e-mail/planilha é comum aqui). Normaliza
+    # antes de checar o rate limit também, senão a mesma pessoa alternando
+    # entre username/e-mail escaparia do contador de tentativas.
+    identifier = (form_data.username or "").strip().lower()
+    _check_login_rate_limit(identifier)
 
-    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    user = db.query(models.User).filter(
+        (func.lower(models.User.username) == identifier) |
+        (func.lower(models.User.email) == identifier)
+    ).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
-        _register_failed_login(form_data.username)
+        _register_failed_login(identifier)
         raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
 
     if user.status != "ativo":
         raise HTTPException(status_code=403, detail="Cadastro pendente de aprovação ou convite não aceito.")
 
-    _clear_login_attempts(form_data.username)
+    _clear_login_attempts(identifier)
 
     # Upgrade transparente: se a senha ainda está em bcrypt (hash legado),
     # re-hasheia para argon2id agora que sabemos que a senha em texto puro está correta.
