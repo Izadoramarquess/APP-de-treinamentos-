@@ -493,13 +493,16 @@ Object.assign(App, {
                 if(file){
                     document.getElementById('em-prog-wrap').style.display='block';
                     status.textContent='Enviando vídeo novo...';
+                    status.style.color='';
                     const initRes=await fetch('/modules/upload/init?filename='+encodeURIComponent(file.name),{method:'POST',headers:this.apiHeaders()});
+                    if(!initRes.ok) throw new Error(await this._errorDetail(initRes,'Não foi possível iniciar o upload.'));
                     const{upload_id}=await initRes.json();
                     const chunkSize=5*1024*1024, totalChunks=Math.ceil(file.size/chunkSize);
                     for(let i=0;i<totalChunks;i++){
                         const chunk=file.slice(i*chunkSize,Math.min((i+1)*chunkSize,file.size));
                         const cfd=new FormData(); cfd.append('upload_id',upload_id); cfd.append('filename',file.name); cfd.append('chunk_index',i); cfd.append('chunk',chunk);
-                        await fetch('/modules/upload/chunk',{method:'POST',headers:this.apiHeaders(),body:cfd});
+                        const chunkRes=await fetch('/modules/upload/chunk',{method:'POST',headers:this.apiHeaders(),body:cfd});
+                        if(!chunkRes.ok) throw new Error(await this._errorDetail(chunkRes,'Falha ao enviar parte do vídeo.'));
                         const pct=Math.round(((i+1)/totalChunks)*100);
                         document.getElementById('em-prog-bar').style.width=pct+'%';
                         status.textContent=`Enviando vídeo novo... ${pct}%`;
@@ -507,9 +510,16 @@ Object.assign(App, {
                     fd.append('upload_id',upload_id); fd.append('filename',file.name);
                     status.textContent='Finalizando...';
                 }
-                await fetch(`/modules/${id}`,{method:'PUT',headers:this.apiHeaders(),body:fd});
+                const saveRes=await fetch(`/modules/${id}`,{method:'PUT',headers:this.apiHeaders(),body:fd});
+                if(!saveRes.ok) throw new Error(await this._errorDetail(saveRes,'Não foi possível salvar o módulo.'));
+                const saved=await saveRes.json();
+                if(file && !saved.video_url) throw new Error('O módulo foi salvo, mas o vídeo novo não chegou a ser gravado. Tente enviar de novo.');
                 this.closeModal(); this.renderAdminModules(this.currentCourse.id,this.currentCourse.title);
-            }catch(err){status.textContent='Erro ao salvar. Tente novamente.';btn.disabled=false;btn.textContent='Salvar';}
+            }catch(err){
+                status.textContent='⚠️ '+(err.message||'Erro ao salvar. Tente novamente.');
+                status.style.color='#ef4444';
+                btn.disabled=false; btn.textContent='Salvar';
+            }
         };
         modal.classList.remove('hidden');
     },
@@ -528,6 +538,13 @@ Object.assign(App, {
         card.scrollIntoView({behavior:'smooth',block:'start'});
     },
 
+    // Extrai a mensagem de erro do backend (ou um texto genérico) de uma
+    // resposta não-2xx — usado em todo upload em pedaços, pra nunca deixar
+    // um chunk falhar em silêncio e o módulo terminar sem vídeo nenhum.
+    async _errorDetail(res, fallback) {
+        try{ const d=await res.json(); return d.detail || fallback; }catch(e){ return fallback; }
+    },
+
     bindModuleForm() {
         document.getElementById('module-upload-form').onsubmit=async(e)=>{
             e.preventDefault();
@@ -537,14 +554,20 @@ Object.assign(App, {
             btn.disabled=true; btn.textContent='Enviando...';
             document.getElementById('m-prog-wrap').style.display='block';
             status.textContent='Iniciando upload...';
+            status.style.color='';
             try{
                 const initRes=await fetch('/modules/upload/init?filename='+encodeURIComponent(file.name),{method:'POST',headers:this.apiHeaders()});
+                if(!initRes.ok) throw new Error(await this._errorDetail(initRes,'Não foi possível iniciar o upload.'));
                 const{upload_id}=await initRes.json();
                 const chunkSize=5*1024*1024, totalChunks=Math.ceil(file.size/chunkSize);
                 for(let i=0;i<totalChunks;i++){
                     const chunk=file.slice(i*chunkSize,Math.min((i+1)*chunkSize,file.size));
                     const fd=new FormData(); fd.append('upload_id',upload_id); fd.append('filename',file.name); fd.append('chunk_index',i); fd.append('chunk',chunk);
-                    await fetch('/modules/upload/chunk',{method:'POST',headers:this.apiHeaders(),body:fd});
+                    const chunkRes=await fetch('/modules/upload/chunk',{method:'POST',headers:this.apiHeaders(),body:fd});
+                    // Sem checar isso, um chunk rejeitado (ex.: estourou o limite de
+                    // tamanho, e o servidor já apagou o arquivo temporário) passava
+                    // batido — a barra ia até 100% e o módulo era criado sem vídeo.
+                    if(!chunkRes.ok) throw new Error(await this._errorDetail(chunkRes,'Falha ao enviar parte do vídeo.'));
                     const pct=Math.round(((i+1)/totalChunks)*100);
                     document.getElementById('m-prog-bar').style.width=pct+'%';
                     status.textContent=`Enviando... ${pct}%`;
@@ -556,10 +579,17 @@ Object.assign(App, {
                 finalFd.append('order',document.getElementById('m-order').value);
                 finalFd.append('upload_id',upload_id); finalFd.append('filename',file.name);
                 if(thumb) finalFd.append('thumbnail',thumb);
-                await fetch(`/courses/${courseId}/modules`,{method:'POST',headers:this.apiHeaders(),body:finalFd});
+                const finalRes=await fetch(`/courses/${courseId}/modules`,{method:'POST',headers:this.apiHeaders(),body:finalFd});
+                if(!finalRes.ok) throw new Error(await this._errorDetail(finalRes,'Não foi possível criar o módulo.'));
+                const created=await finalRes.json();
+                if(!created.video_url) throw new Error('O módulo foi criado, mas o vídeo não chegou a ser salvo. Edite o módulo e tente enviar de novo.');
                 status.textContent='✓ Upload concluído!';
                 setTimeout(()=>this.renderAdminModules(courseId,this.currentCourse.title),1000);
-            }catch(err){status.textContent='Erro no upload. Tente novamente.';btn.disabled=false;btn.textContent='Fazer upload';}
+            }catch(err){
+                status.textContent='⚠️ '+(err.message||'Erro no upload. Tente novamente.');
+                status.style.color='#ef4444';
+                btn.disabled=false; btn.textContent='Fazer upload';
+            }
         };
     },
 

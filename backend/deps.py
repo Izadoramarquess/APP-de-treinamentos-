@@ -182,7 +182,7 @@ ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 # de produção e pode faltar mapeamento pra algumas extensões de vídeo.
 for _ext, _mime in {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}.items():
     mimetypes.add_type(_mime, _ext)
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "500")) * 1024 * 1024
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "2000")) * 1024 * 1024
 _SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 def sanitize_filename(name: str, allowed_ext: set) -> str:
