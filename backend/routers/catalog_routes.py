@@ -10,17 +10,21 @@ from sqlalchemy.orm import Session
 
 import models
 from deps import (
-    get_db, authorize,
+    get_db, get_current_user, authorize,
     UPLOADS_DIR, ALLOWED_VIDEO_EXT, ALLOWED_IMAGE_EXT, MAX_UPLOAD_BYTES,
     sanitize_filename, safe_filename, check_upload_size,
+    resolve_company_id as _resolve_company_id, check_same_company as _check_same_company,
 )
 
 router = APIRouter()
 
 # ---------------- Courses ----------------
 @router.get("/courses", response_model=List[models.CourseSchema])
-def list_courses(db: Session = Depends(get_db)):
-    return db.query(models.Course).order_by(models.Course.order).all()
+def list_courses(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    query = db.query(models.Course)
+    if current_user.role != "super_admin":
+        query = query.filter(models.Course.company_id == current_user.company_id)
+    return query.order_by(models.Course.order).all()
 
 @router.post("/courses", response_model=models.CourseSchema)
 def create_course(
@@ -29,10 +33,12 @@ def create_course(
     order: int = Form(1),
     is_standard_training: bool = Form(False),
     validity_months: int = Form(None),
+    company_id: int = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
+    resolved_company_id = _resolve_company_id(current_user, company_id)
     cert_path = None
     if certificate_template and certificate_template.filename:
         check_upload_size(certificate_template.size or 0)
@@ -46,6 +52,7 @@ def create_course(
         is_standard_training=is_standard_training,
         validity_months=validity_months,
         certificate_template_url=cert_path,
+        company_id=resolved_company_id,
     )
     db.add(course)
     db.commit()
@@ -67,6 +74,7 @@ def update_course(
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
+    _check_same_company(current_user, course.company_id, "curso")
     course.title = title
     course.description = description
     course.order = order
@@ -89,6 +97,7 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
+    _check_same_company(current_user, course.company_id, "curso")
     # Antes isso era responsabilidade do delete_path (que não existe mais) — o
     # Curso é o nível de topo agora, então ele mesmo limpa matrícula/certificado.
     db.query(models.Enrollment).filter(models.Enrollment.course_id == course_id).delete()
@@ -101,7 +110,10 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
 
 # ---------------- Modules ----------------
 @router.get("/courses/{course_id}/modules", response_model=List[models.ModuleSchema])
-def list_modules(course_id: int, db: Session = Depends(get_db)):
+def list_modules(course_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if course:
+        _check_same_company(current_user, course.company_id, "curso")
     return db.query(models.Module).filter(models.Module.course_id == course_id).order_by(models.Module.order).all()
 
 @router.post("/modules/upload/init")
@@ -140,6 +152,11 @@ def create_module(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
+    course = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Curso não encontrado")
+    _check_same_company(current_user, course.company_id, "curso")
+
     video_url = None
     final_dir = UPLOADS_DIR
 
@@ -199,6 +216,8 @@ def update_module(
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
+    if module.course:
+        _check_same_company(current_user, module.course.company_id, "módulo")
 
     module.title = (title or "").strip() or f"Módulo {order}"
     module.description = description
@@ -213,6 +232,8 @@ def delete_module(module_id: int, db: Session = Depends(get_db), current_user: m
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
+    if module.course:
+        _check_same_company(current_user, module.course.company_id, "módulo")
 
     db.query(models.Question).filter(models.Question.module_id == module.id).delete()
     db.query(models.Material).filter(models.Material.module_id == module.id).delete()

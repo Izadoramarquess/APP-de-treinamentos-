@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, get_current_user, authorize, _mark_module_complete
+from deps import get_db, get_current_user, authorize, _mark_module_complete, require_enrolled_in_module, check_same_company
 
 router = APIRouter()
 
@@ -21,6 +21,7 @@ def list_questions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    require_enrolled_in_module(db, current_user.id, module_id)
     return db.query(models.Question).filter(models.Question.module_id == module_id).all()
 
 @router.post("/modules/{module_id}/questions", response_model=models.QuestionSchema)
@@ -30,6 +31,12 @@ def add_question(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
+    module = db.query(models.Module).filter(models.Module.id == module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail="Módulo não encontrado")
+    if module.course:
+        check_same_company(current_user, module.course.company_id, "módulo")
+
     db_question = models.Question(
         module_id=module_id,
         text=question_data["text"],
@@ -60,6 +67,7 @@ def check_question_answer(
     question = db.query(models.Question).filter(models.Question.id == question_id).first()
     if not question:
         raise HTTPException(status_code=404, detail="Pergunta não encontrada")
+    require_enrolled_in_module(db, current_user.id, question.module_id)
     return {"correct": selected_option.strip().upper() == (question.correct_option or "").strip().upper()}
 
 @router.post("/modules/{module_id}/exam-submit")
@@ -73,6 +81,7 @@ def submit_exam(
     enviadas ({question_id, selected_option}) e só marca o módulo como
     concluído (com a nota calculada aqui, nunca a que o cliente mandar) se
     a nota real bater o mínimo de aprovação."""
+    require_enrolled_in_module(db, current_user.id, module_id)
     exam_questions = db.query(models.Question).filter(
         models.Question.module_id == module_id,
         models.Question.is_final_exam == True

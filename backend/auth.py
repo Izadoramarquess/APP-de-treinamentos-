@@ -50,6 +50,7 @@ class UserCreate(BaseModel):
     email: str
     password: str
     department: str
+    company_id: int  # ← autocadastro escolhe a própria empresa (Geo, Cri Geo, ...)
     invite_token: Optional[str] = None  # ← token de convite opcional no cadastro
 
     @field_validator("department")
@@ -108,11 +109,13 @@ def _register_failed_login(username: str):
 def _clear_login_attempts(username: str):
     _LOGIN_ATTEMPTS.pop(username, None)
 
-def get_default_team(db: Session) -> models.Team:
-    """Time usado para usuários que ainda não têm equipe atribuída (Time é obrigatório em User)."""
-    team = db.query(models.Team).filter(models.Team.name == "Sem Equipe").first()
+def get_default_team(db: Session, company_id: int) -> models.Team:
+    """Time usado para usuários que ainda não têm equipe atribuída (Time é
+    obrigatório em User) — escopado por empresa, já que Team.name não é
+    mais globalmente único (cada empresa tem a própria 'Sem Equipe')."""
+    team = db.query(models.Team).filter(models.Team.name == "Sem Equipe", models.Team.company_id == company_id).first()
     if not team:
-        team = models.Team(name="Sem Equipe", description="Time padrão para usuários sem equipe atribuída")
+        team = models.Team(name="Sem Equipe", description="Time padrão para usuários sem equipe atribuída", company_id=company_id)
         db.add(team)
         db.commit()
         db.refresh(team)
@@ -121,6 +124,10 @@ def get_default_team(db: Session) -> models.Team:
 def register_user(db: Session, user: UserCreate):
     if not is_allowed_email_domain(user.email):
         raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
+
+    company = db.query(models.Company).filter(models.Company.id == user.company_id).first()
+    if not company:
+        raise HTTPException(status_code=400, detail="Empresa inválida.")
 
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
     if existing_user:
@@ -137,6 +144,7 @@ def register_user(db: Session, user: UserCreate):
                 existing_user.username = user.username
                 existing_user.hashed_password = get_password_hash(user.password)
                 existing_user.department = user.department
+                existing_user.company_id = user.company_id
                 existing_user.status = "ativo"
                 existing_user.invite_token = None  # invalida o token após uso
                 db.commit()
@@ -156,7 +164,8 @@ def register_user(db: Session, user: UserCreate):
         email=user.email,
         hashed_password=hashed_password,
         department=user.department,
-        team_id=get_default_team(db).id,  # cadastro público não escolhe time; admin/liderança reatribuem depois
+        team_id=get_default_team(db, user.company_id).id,  # cadastro público não escolhe time; admin/liderança reatribuem depois
+        company_id=user.company_id,
         role="colaborador",
         status="pending"  # ← nunca "ativo" sem aprovação
     )

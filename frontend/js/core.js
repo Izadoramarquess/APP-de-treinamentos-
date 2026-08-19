@@ -172,7 +172,16 @@ const App = {
         if (!this.user) return;
         const role = this.user.role;
         let navHtml = '';
-        if (role === 'admin') {
+        if (role === 'super_admin') {
+            navHtml = `
+                <a class="nav-link" onclick="App.renderAdminDashboard()">Dashboard</a>
+                <a class="nav-link" onclick="App.renderAdminUsers()">Usuários</a>
+                <a class="nav-link" onclick="App.renderAdminInvites()">Convites</a>
+                <a class="nav-link" onclick="App.renderAdminTeams()">Equipes</a>
+                <a class="nav-link" onclick="App.renderAdminCourses()">Cursos</a>
+                <a class="nav-link" onclick="App.renderAdminProgress()">Progresso</a>
+                <a class="nav-link" onclick="App.renderCompanies()">🏢 Empresas</a>`;
+        } else if (role === 'admin') {
             navHtml = `
                 <a class="nav-link" onclick="App.renderAdminDashboard()">Dashboard</a>
                 <a class="nav-link" onclick="App.renderAdminUsers()">Usuários</a>
@@ -199,9 +208,9 @@ const App = {
 
     showDashboard() {
         const r = this.user.role;
-        if (r==='admin')          this.renderAdminDashboard();
-        else if (r==='lideranca') this.renderLeaderDashboard();
-        else                      this.renderStudentDashboard();
+        if (r==='admin' || r==='super_admin') this.renderAdminDashboard();
+        else if (r==='lideranca')             this.renderLeaderDashboard();
+        else                                  this.renderStudentDashboard();
     },
 
     _resetContainerStyles() {

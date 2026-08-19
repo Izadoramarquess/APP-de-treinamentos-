@@ -106,12 +106,22 @@ Object.assign(App, {
         };
     },
 
-    renderRegister(container) {
+    async renderRegister(container) {
         container.style.maxWidth='100%'; container.style.margin='0'; container.style.padding='0';
+        // Endpoint público (sem exigir login) — a pessoa escolhe a própria
+        // empresa, já que ninguém está convidando ela nesse fluxo.
+        let companies=[];
+        try{ const r=await fetch('/companies/public'); if(r.ok) companies=await r.json(); }catch(e){}
         container.innerHTML = this._authWrap(`
             <h2 style="margin-bottom:1.5rem;font-weight:700;font-size:1.35rem;color:var(--primary)">Solicitar acesso</h2>
             <form id="reg-form">
                 <div class="form-group"><label>Nome de usuário</label><input type="text" id="r-user" class="form-control" required></div>
+                <div class="form-group"><label>Empresa</label>
+                    <select id="r-company" class="form-control" required>
+                        <option value="" disabled selected>Selecione...</option>
+                        ${companies.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+                    </select>
+                </div>
                 <div class="form-group"><label>Departamento</label><input type="text" id="r-dept" class="form-control" required></div>
                 <div class="form-group"><label>E-mail corporativo</label><input type="email" id="r-email" class="form-control" placeholder="e-mail@geobiogas.tech" required></div>
                 <div class="form-group"><label>Senha</label><input type="password" id="r-pass" class="form-control" required></div>
@@ -123,7 +133,7 @@ Object.assign(App, {
         document.getElementById('reg-form').onsubmit = async (e) => {
             e.preventDefault();
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Enviando...';
-            const payload={username:document.getElementById('r-user').value,email:document.getElementById('r-email').value,password:document.getElementById('r-pass').value,department:document.getElementById('r-dept').value};
+            const payload={username:document.getElementById('r-user').value,email:document.getElementById('r-email').value,password:document.getElementById('r-pass').value,department:document.getElementById('r-dept').value,company_id:parseInt(document.getElementById('r-company').value,10)};
             const res=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
             if(res.ok){alert('Solicitação enviada! Aguarde aprovação.');this.showView('login');}
             else{const d=await res.json();alert(d.detail||d.error||'Erro no registro.');btn.disabled=false;btn.textContent='Enviar solicitação';}

@@ -274,9 +274,82 @@ def _init_db_locked():
                 conn.execute(text("ALTER TABLE certificates ADD COLUMN expiry_reminder_sent BOOLEAN DEFAULT 0"))
                 conn.commit()
 
+    # Multi-empresa: GeoTrilha passou a atender mais de uma empresa a partir
+    # do mesmo banco. Toda empresa/curso/time já existente pertencia
+    # implicitamente à empresa que já estava em produção — cria essa empresa
+    # ("Geo") e faz o backfill antes de mais nada, pra tudo que já existe
+    # continuar funcionando sem intervenção manual.
+    import models as _models
+    if "companies" not in inspector.get_table_names():
+        _models.Company.__table__.create(bind=engine, checkfirst=True)
+        inspector = inspect(engine)
+
+    with engine.connect() as conn:
+        default_company_id = conn.execute(text("SELECT id FROM companies WHERE name = 'Geo'")).scalar()
+        if default_company_id is None:
+            # created_at explícito — inserindo via SQL puro (não pela ORM), o
+            # default do modelo (Python-side) nunca dispara, e CompanySchema
+            # exige created_at não-nulo.
+            conn.execute(text("INSERT INTO companies (name, created_at) VALUES ('Geo', CURRENT_TIMESTAMP)"))
+            conn.commit()
+            default_company_id = conn.execute(text("SELECT id FROM companies WHERE name = 'Geo'")).scalar()
+        # Backfill defensivo — cobre quem já rodou uma versão anterior desta
+        # migração que não setava created_at.
+        conn.execute(text("UPDATE companies SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+        conn.commit()
+
+    for _table in ("teams", "courses", "users"):
+        if _table in inspector.get_table_names():
+            with engine.connect() as conn:
+                _cols = [c['name'] for c in inspector.get_columns(_table)]
+                if 'company_id' not in _cols:
+                    conn.execute(text(f"ALTER TABLE {_table} ADD COLUMN company_id INTEGER REFERENCES companies(id)"))
+                    conn.commit()
+                    conn.execute(text(f"UPDATE {_table} SET company_id = :cid WHERE company_id IS NULL"), {"cid": default_company_id})
+                    conn.commit()
+
+    # Time.name deixou de poder ser globalmente único: toda empresa nova
+    # precisa do próprio time "Sem Equipe" com o MESMO nome de outra
+    # empresa, o que colide com o índice único antigo (Column(unique=True)).
+    # Remove esse índice — unicidade passa a ser aplicada só na aplicação,
+    # escopada por (company_id, name).
+    if "teams" in inspector.get_table_names():
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS ix_teams_name"))
+                conn.commit()
+            except Exception as e:
+                print(f"Warning ao remover índice único de teams.name: {e}")
+
+    # teams.company_id e courses.company_id são sempre obrigatórios (só
+    # User.company_id fica nulo, e só para super_admin) — reforça a
+    # constraint física em Postgres, igual já é feito para outras colunas
+    # que passaram de opcionais a obrigatórias neste arquivo.
+    if engine.dialect.name == "postgresql":
+        for _table, _col in (("teams", "company_id"), ("courses", "company_id")):
+            if _table in inspector.get_table_names():
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {_table} ALTER COLUMN {_col} SET NOT NULL"))
+                        conn.commit()
+                    except Exception as e:
+                        print(f"Warning while enforcing NOT NULL on {_table}.{_col}: {e}")
+
+    # Promove o admin do seed original a super_admin (enxerga as duas
+    # empresas) — só roda uma vez, só se ainda não existir nenhum
+    # super_admin e houver exatamente um 'admin' (o cenário de quem já
+    # tinha o sistema rodando antes da divisão por empresa existir).
+    if "users" in inspector.get_table_names():
+        with engine.connect() as conn:
+            super_admin_count = conn.execute(text("SELECT COUNT(*) FROM users WHERE role = 'super_admin'")).scalar()
+            admin_count = conn.execute(text("SELECT COUNT(*) FROM users WHERE role = 'admin'")).scalar()
+            if super_admin_count == 0 and admin_count == 1:
+                conn.execute(text("UPDATE users SET role = 'super_admin', company_id = NULL WHERE role = 'admin'"))
+                conn.commit()
+
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
-    
+
     # Seed admin user
     from sqlalchemy.orm import Session
     from auth import get_password_hash
@@ -285,18 +358,20 @@ def _init_db_locked():
     db = SessionLocal()
     try:
         # Time padrão para usuários sem equipe atribuída (department/team_id
-        # são obrigatórios em User desde já)
-        default_team = db.query(models.Team).filter(models.Team.name == "Sem Equipe").first()
+        # são obrigatórios em User desde já) — escopado pela empresa padrão
+        # criada acima; empresas novas ganham a própria "Sem Equipe" sob
+        # demanda via auth.get_default_team(db, company_id).
+        default_team = db.query(models.Team).filter(models.Team.name == "Sem Equipe", models.Team.company_id == default_company_id).first()
         if not default_team:
-            default_team = models.Team(name="Sem Equipe", description="Time padrão para usuários sem equipe atribuída")
+            default_team = models.Team(name="Sem Equipe", description="Time padrão para usuários sem equipe atribuída", company_id=default_company_id)
             db.add(default_team)
             db.commit()
             db.refresh(default_team)
 
         # Seed Teams
-        team_alpha = db.query(models.Team).filter(models.Team.name == "Alpha").first()
+        team_alpha = db.query(models.Team).filter(models.Team.name == "Alpha", models.Team.company_id == default_company_id).first()
         if not team_alpha:
-            team_alpha = models.Team(name="Alpha", description="Equipe de Operações")
+            team_alpha = models.Team(name="Alpha", description="Equipe de Operações", company_id=default_company_id)
             db.add(team_alpha)
             db.commit()
             db.refresh(team_alpha)
@@ -314,10 +389,11 @@ def _init_db_locked():
                 username="admin",
                 email="admin@geotrilha.com.br",
                 hashed_password=hashed_password,
-                role="admin",
+                role="super_admin",
                 status="ativo",
                 department="Administração",
                 team_id=default_team.id,
+                company_id=None,
                 must_change_password=True
             )
             db.add(admin_user)
@@ -334,14 +410,15 @@ def _init_db_locked():
                 role="lideranca",
                 status="ativo",
                 department="Operações",
-                team_id=team_alpha.id
+                team_id=team_alpha.id,
+                company_id=default_company_id
             )
             db.add(lider_user)
 
         # Seed Course (Curso é o nível de topo agora — não existe mais trilha por cima)
         course_exists = db.query(models.Course).filter(models.Course.title == "Segurança da Informação").first()
         if not course_exists:
-            course = models.Course(title="Segurança da Informação", description="Princípios básicos de segurança digital e proteção de dados — Introdução à LGPD.", order=1)
+            course = models.Course(title="Segurança da Informação", description="Princípios básicos de segurança digital e proteção de dados — Introdução à LGPD.", order=1, company_id=default_company_id)
             db.add(course)
 
         db.commit()

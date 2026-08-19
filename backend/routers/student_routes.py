@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate
+from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate, require_enrolled, require_enrolled_in_module
 from certificate_pdf import generate_certificate_pdf
 
 router = APIRouter()
@@ -18,6 +18,7 @@ def complete_module(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    require_enrolled_in_module(db, current_user.id, module_id)
     # Módulos com prova final só podem ser concluídos via /modules/{id}/exam-submit,
     # que corrige as respostas no servidor. Isso fecha o atalho de marcar
     # "concluído" direto sem nunca ter respondido a prova.
@@ -38,6 +39,7 @@ def get_course_progress(
     current_user: models.User = Depends(get_current_user)
 ):
     """Progresso módulo a módulo (usado pela tela de módulos do aluno)."""
+    require_enrolled(db, current_user.id, course_id)
     progresses = db.query(models.ModuleProgress).join(models.Module).filter(
         models.Module.course_id == course_id,
         models.ModuleProgress.user_id == current_user.id
@@ -55,6 +57,7 @@ def get_course_progress_summary(
     uma trilha, o curso já é o próprio nível de topo)."""
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course: raise HTTPException(404, "Curso não encontrado")
+    require_enrolled(db, current_user.id, course_id)
     modules = db.query(models.Module).filter(models.Module.course_id == course_id).all()
     total = len(modules)
     completed = 0
@@ -89,9 +92,14 @@ def get_team_progress(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
 ):
-    if current_user.role == "admin":
+    if current_user.role == "super_admin":
         members = db.query(models.User).filter(
             models.User.status == "ativo"
+        ).all()
+    elif current_user.role == "admin":
+        members = db.query(models.User).filter(
+            models.User.status == "ativo",
+            models.User.company_id == current_user.company_id
         ).all()
     else:
         members = db.query(models.User).filter(
@@ -159,6 +167,7 @@ def get_team_progress(
             "role": member.role,
             "team_id": member.team_id,
             "team_name": team_names.get(member.team_id, "—"),
+            "company_id": member.company_id,
             "enrollments": len(enrollments),
             "modules_total": total,
             "modules_done": done,
@@ -218,18 +227,23 @@ def download_certificate(
 
     owner = db.query(models.User).filter(models.User.id == cert.user_id).first()
     is_owner = current_user.id == cert.user_id
-    is_admin = current_user.role == "admin"
+    is_super_admin = current_user.role == "super_admin"
+    is_admin = current_user.role == "admin" and owner and owner.company_id == current_user.company_id
     is_leader_of_owner = current_user.role == "lideranca" and owner and owner.team_id == current_user.team_id
-    if not (is_owner or is_admin or is_leader_of_owner):
+    if not (is_owner or is_super_admin or is_admin or is_leader_of_owner):
         raise HTTPException(403, "Sem permissão para baixar este certificado")
 
     course = db.query(models.Course).filter(models.Course.id == cert.course_id).first()
+    company_logo_url = course.company.logo_url if course and course.company else None
+    company_name = course.company.name if course and course.company else None
     pdf_bytes = generate_certificate_pdf(
         username=owner.username if owner else "—",
         course_title=course.title if course else "—",
         issued_at=cert.issued_at,
         expires_at=cert.expires_at,
         certificate_template_url=course.certificate_template_url if course else None,
+        company_logo_url=company_logo_url,
+        company_name=company_name,
     )
     safe_course_name = "".join(ch if ch.isalnum() else "_" for ch in (course.title if course else "certificado"))
     return Response(

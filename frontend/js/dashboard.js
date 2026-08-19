@@ -78,6 +78,7 @@ Object.assign(App, {
 
     async renderAdminProgress() {
         this._resetContainerStyles();
+        const isSuper = this.user.role === 'super_admin';
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Progresso'})+`
             <div class="grid-stats" id="prog-stats" style="margin-bottom:1rem">
@@ -86,6 +87,10 @@ Object.assign(App, {
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="pg-finalizado">—</div><div class="stat-label">Finalizados</div></div></div>
             </div>
             <div class="card" style="margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+                ${isSuper?`<label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Empresa:</label>
+                <select id="prog-company-filter" class="form-control" style="max-width:220px;width:auto">
+                    <option value="">Todas as empresas</option>
+                </select>`:''}
                 <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
                 <select id="prog-team-filter" class="form-control" style="max-width:260px;width:auto">
                     <option value="">Todas as equipes</option>
@@ -99,11 +104,21 @@ Object.assign(App, {
                 </table>
             </div>`;
 
-        let allMembers = [];
-        try {
-            const res = await fetch('/team/progress', {headers:this.apiHeaders()});
-            allMembers = res.ok ? await res.json() : [];
-        } catch(e) { console.error('Erro ao carregar progresso:', e); }
+        const [progRes, companies] = await Promise.all([
+            fetch('/team/progress', {headers:this.apiHeaders()}).catch(()=>null),
+            isSuper ? this._fetchCompanies() : Promise.resolve([])
+        ]);
+        const allMembers = (progRes && progRes.ok) ? await progRes.json() : [];
+        const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
+
+        if (isSuper) {
+            const companySel = document.getElementById('prog-company-filter');
+            const companiesSeen = new Map();
+            allMembers.forEach(m=>{ if(m.company_id!=null) companiesSeen.set(m.company_id, companyName(m.company_id)); });
+            [...companiesSeen.entries()].sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).forEach(([id,name])=>{
+                companySel.innerHTML += `<option value="${id}">${name}</option>`;
+            });
+        }
 
         const filterSel = document.getElementById('prog-team-filter');
         const teamsSeen = new Map();
@@ -117,7 +132,9 @@ Object.assign(App, {
 
         const renderRows = (teamId) => {
             const tbody=document.querySelector('#progress-table tbody'); tbody.innerHTML='';
-            const filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
+            const companyId = isSuper ? document.getElementById('prog-company-filter').value : '';
+            let filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
+            if (companyId) filtered = filtered.filter(m=>String(m.company_id)===String(companyId));
             currentFiltered = filtered;
             const counts=this._countCourseStatuses(filtered);
             document.getElementById('pg-matriculado').textContent=counts.matriculado;
@@ -148,6 +165,7 @@ Object.assign(App, {
         };
         renderRows('');
         filterSel.onchange = () => renderRows(filterSel.value);
+        if (isSuper) document.getElementById('prog-company-filter').onchange = () => renderRows(filterSel.value);
     },
 
     async renderAdminDashboard() {

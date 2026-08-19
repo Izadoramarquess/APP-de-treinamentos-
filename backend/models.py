@@ -5,11 +5,26 @@ from database import Base
 from pydantic import BaseModel
 from typing import List, Optional
 
+class Company(Base):
+    """Empresa (tenant) — GeoTrilha passou a atender mais de uma empresa a
+    partir do mesmo deploy/banco. Usuário/Equipe/Curso pertencem sempre a
+    uma empresa; só o papel 'super_admin' não pertence a nenhuma (enxerga
+    todas). logo_url é usado automaticamente na geração do certificado."""
+    __tablename__ = "companies"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    logo_url = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class Team(Base):
     __tablename__ = "teams"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
+    # Nome não é mais globalmente único (duas empresas podem ter uma
+    # "Operações" cada) — unicidade passa a ser aplicada na aplicação,
+    # escopada por (company_id, name).
+    name = Column(String, index=True)
     description = Column(Text, nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
 
     members = relationship("User", back_populates="team")
 
@@ -19,10 +34,12 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
-    role = Column(String, default="usuario") # 'admin', 'lideranca', 'usuario'
+    role = Column(String, default="usuario") # 'super_admin', 'admin', 'lideranca', 'usuario'
     status = Column(String, default="pending") # 'pendente', 'ativo', 'convite_pendente', 'convite_expirado'
     department = Column(String, nullable=False)
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
+    # Nulo só para 'super_admin' — todo outro papel pertence a uma empresa.
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     invite_token = Column(String, nullable=True)
     invite_expires_at = Column(DateTime, nullable=True)
     invited_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -31,6 +48,7 @@ class User(Base):
     must_change_password = Column(Boolean, default=False)
 
     team = relationship("Team", back_populates="members")
+    company = relationship("Company", foreign_keys=[company_id])
     enrollments = relationship("Enrollment", back_populates="user")
     certificates = relationship("Certificate", back_populates="user")
     course_progress = relationship("ModuleProgress", back_populates="user")
@@ -51,10 +69,12 @@ class Course(Base):
     is_standard_training = Column(Boolean, default=False)
     validity_months = Column(Integer, nullable=True)
     certificate_template_url = Column(String, nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
 
     modules = relationship("Module", back_populates="course", order_by="Module.order")
     enrollments = relationship("Enrollment", back_populates="course")
     certificates = relationship("Certificate", back_populates="course")
+    company = relationship("Company", foreign_keys=[company_id])
 
 class Module(Base):
     __tablename__ = "modules"
@@ -205,6 +225,7 @@ class CourseSchema(BaseModel):
     is_standard_training: bool = False
     validity_months: Optional[int] = None
     certificate_template_url: Optional[str] = None
+    company_id: int
     modules: List[ModuleSchema] = []
     class Config: from_attributes = True
 
@@ -216,9 +237,17 @@ class UserSchema(BaseModel):
     status: str
     department: str
     team_id: int
+    company_id: Optional[int] = None
     invite_expires_at: Optional[datetime.datetime] = None
     invited_by_id: Optional[int] = None
     must_change_password: bool = False
+    class Config: from_attributes = True
+
+class CompanySchema(BaseModel):
+    id: int
+    name: str
+    logo_url: Optional[str] = None
+    created_at: datetime.datetime
     class Config: from_attributes = True
 
 class EmailLogSchema(BaseModel):
@@ -243,5 +272,6 @@ class TeamSchema(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    company_id: int
     members: List[UserSchema] = []
     class Config: from_attributes = True

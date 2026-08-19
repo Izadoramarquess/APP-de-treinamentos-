@@ -42,12 +42,47 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 def authorize(allowed_roles: List[str]):
     def decorator(current_user: models.User = Depends(get_current_user)):
-        if current_user.role == "admin":
+        # admin sempre acessa rotas de papel mais baixo (ex.: lideranca);
+        # super_admin (enxerga todas as empresas) tem o mesmo bypass.
+        if current_user.role in ("admin", "super_admin"):
             return current_user
         if current_user.role not in allowed_roles:
             raise HTTPException(status_code=403, detail="Você não tem permissão para realizar esta ação.")
         return current_user
     return decorator
+
+def require_enrolled(db: Session, user_id: int, course_id: int):
+    """Fronteira de autorização de quem pode ver/responder quiz e progresso
+    de um módulo: estar matriculado no curso. Sem isso, qualquer usuário
+    autenticado conseguia ver pergunta e completar módulo de curso alheio
+    (inclusive de outra empresa) só sabendo o ID."""
+    enrolled = db.query(models.Enrollment).filter(
+        models.Enrollment.user_id == user_id,
+        models.Enrollment.course_id == course_id
+    ).first()
+    if not enrolled:
+        raise HTTPException(status_code=403, detail="Você não está matriculado neste curso.")
+
+def require_enrolled_in_module(db: Session, user_id: int, module_id: int):
+    module = db.query(models.Module).filter(models.Module.id == module_id).first()
+    if not module or not module.course_id:
+        raise HTTPException(status_code=404, detail="Módulo não encontrado")
+    require_enrolled(db, user_id, module.course_id)
+
+# ---------------- Multi-empresa ----------------
+def resolve_company_id(current_user: models.User, requested_company_id: Optional[int] = None) -> int:
+    """admin/lideranca sempre usam a própria empresa (ignora qualquer valor
+    enviado); super_admin não tem empresa própria, então precisa informar
+    qual — sem isso não daria pra saber onde criar o recurso."""
+    if current_user.role == "super_admin":
+        if not requested_company_id:
+            raise HTTPException(status_code=400, detail="Informe a empresa (company_id).")
+        return requested_company_id
+    return current_user.company_id
+
+def check_same_company(current_user: models.User, entity_company_id: int, what: str = "recurso"):
+    if current_user.role != "super_admin" and entity_company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail=f"Este {what} não pertence à sua empresa.")
 
 # ---------------- Constantes de domínio ----------------
 UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads"))

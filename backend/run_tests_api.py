@@ -35,13 +35,21 @@ if not admin_token:
     print("Erro ao logar como admin.")
     exit(1)
 
+# O admin de teste vira super_admin no seed (multi-empresa) — super_admin
+# não pertence a nenhuma empresa, então toda criação de curso/equipe
+# precisa informar company_id explicitamente. Usa a primeira empresa
+# cadastrada (a "Geo" que já vem do seed).
+r_companies = requests.get(f"{BASE_URL}/companies", headers=admin_headers)
+default_company_id = r_companies.json()[0]["id"] if r_companies.status_code == 200 and r_companies.json() else None
+course_extra = {"company_id": default_company_id} if default_company_id else {}
+
 # Curso é o nível de topo do catálogo (não existe mais Trilha por cima) —
 # um líder/admin matricula o usuário direto no curso, que é feito por
 # módulos; o certificado é emitido automaticamente quando todos os módulos
 # do curso são concluídos.
 
 print("Iniciando TC-027...")
-r_course = requests.post(f"{BASE_URL}/courses", headers=admin_headers, data={"title": "Curso Teste API", "description": "Desc"})
+r_course = requests.post(f"{BASE_URL}/courses", headers=admin_headers, data={"title": "Curso Teste API", "description": "Desc", **course_extra})
 if r_course.status_code == 200:
     course_id = r_course.json()["id"]
     add_result("TC-027", "Criar curso", "✅ Passou", "Curso criado com sucesso via API.")
@@ -50,7 +58,7 @@ else:
     add_result("TC-027", "Criar curso", "❌ Falhou", f"Erro: {r_course.text}")
 
 print("Iniciando TC-028...")
-r_course2 = requests.post(f"{BASE_URL}/courses", headers=admin_headers, data={"title": "Curso Padrao API", "is_standard_training": True})
+r_course2 = requests.post(f"{BASE_URL}/courses", headers=admin_headers, data={"title": "Curso Padrao API", "is_standard_training": True, **course_extra})
 if r_course2.status_code == 200 and r_course2.json().get("is_standard_training"):
     add_result("TC-028", "Marcar curso como padrão obrigatório", "✅ Passou", "Curso marcado como obrigatório com sucesso.")
 else:
@@ -124,7 +132,7 @@ else:
 print("Recriando curso...")
 # --- Recria um curso para os testes do aluno ---
 video_url = None  # será preenchido quando o módulo for criado
-r_course = requests.post(f"{BASE_URL}/courses", headers=admin_headers, data={"title": "Curso Aluno API", "description": "Curso para teste do aluno"})
+r_course = requests.post(f"{BASE_URL}/courses", headers=admin_headers, data={"title": "Curso Aluno API", "description": "Curso para teste do aluno", **course_extra})
 course_id = r_course.json().get("id")
 
 if course_id:

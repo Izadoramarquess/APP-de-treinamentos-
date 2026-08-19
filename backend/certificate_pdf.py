@@ -21,14 +21,18 @@ SIGNATURE_LINE = HexColor("#94a3b8")
 LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
 
 
-def _template_path(certificate_template_url):
-    if not certificate_template_url:
+def _template_path(url):
+    """Resolve uma URL tipo /uploads/xxx.png pro caminho físico do arquivo
+    — usado tanto pro template de certificado do curso quanto pra logo da
+    empresa, que ficam salvos no mesmo diretório de uploads."""
+    if not url:
         return None
-    path = os.path.join(UPLOADS_DIR, os.path.basename(certificate_template_url))
+    path = os.path.join(UPLOADS_DIR, os.path.basename(url))
     return path if os.path.isfile(path) else None
 
 
-def generate_certificate_pdf(username: str, course_title: str, issued_at, expires_at, certificate_template_url=None) -> bytes:
+def generate_certificate_pdf(username: str, course_title: str, issued_at, expires_at,
+                              certificate_template_url=None, company_logo_url=None, company_name=None) -> bytes:
     buf = BytesIO()
     page_size = landscape(A4)
     w, h = page_size
@@ -40,19 +44,22 @@ def generate_certificate_pdf(username: str, course_title: str, issued_at, expire
     else:
         _draw_default_background(c, w, h)
 
-    _draw_logo(c, w, h)
+    _draw_logo(c, w, h, company_logo_url)
     _draw_text(c, w, h, username, course_title, issued_at, expires_at)
-    _draw_signature_line(c, w, h)
+    _draw_signature_line(c, w, h, company_name)
 
     c.showPage()
     c.save()
     return buf.getvalue()
 
 
-def _draw_logo(c, w, h):
-    if not os.path.isfile(LOGO_PATH):
+def _draw_logo(c, w, h, company_logo_url):
+    # Logo da empresa do curso tem prioridade; sem ela, cai no fallback
+    # fixo (útil pra empresa que ainda não subiu a própria logo).
+    logo_path = _template_path(company_logo_url) or (LOGO_PATH if os.path.isfile(LOGO_PATH) else None)
+    if not logo_path:
         return
-    img = ImageReader(LOGO_PATH)
+    img = ImageReader(logo_path)
     iw, ih = img.getSize()
     logo_w = 3.2 * cm
     logo_h = logo_w * (ih / iw)
@@ -60,9 +67,9 @@ def _draw_logo(c, w, h):
                 preserveAspectRatio=True, mask="auto")
 
 
-def _draw_signature_line(c, w, h):
+def _draw_signature_line(c, w, h, company_name):
     """Espaço para assinatura — uma linha em branco pra assinar na mão (ou
-    digitalmente depois) mais o nome de quem responde pelo treinamento."""
+    digitalmente depois) mais o nome da empresa responsável pelo treinamento."""
     line_y = 5.4 * cm
     line_w = 7 * cm
     line_x = (w - line_w) / 2
@@ -71,7 +78,7 @@ def _draw_signature_line(c, w, h):
     c.line(line_x, line_y, line_x + line_w, line_y)
     c.setFillColor(TEXT_DIM)
     c.setFont("Helvetica", 10)
-    c.drawCentredString(w / 2, line_y - 0.5 * cm, "Geo Bio Gas & Carbon")
+    c.drawCentredString(w / 2, line_y - 0.5 * cm, company_name or "GeoTrilha")
 
 
 def _draw_default_background(c, w, h):

@@ -4,6 +4,7 @@
 Object.assign(App, {
     async renderAdminUsers() {
         this._resetContainerStyles();
+        const isSuper = this.user.role === 'super_admin';
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Gestão de Usuários',actionLabel:'+ Convidar Usuário',actionFn:'App.showInviteUserModal()'})+`
             <div style="display:flex;gap:0.75rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap">
@@ -12,14 +13,18 @@ Object.assign(App, {
             </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="u-table">
-                    <thead><tr><th>Usuário</th><th>E-mail</th><th>Depto</th><th>Cargo</th><th>Status</th><th>Ações</th></tr></thead>
-                    <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
+                    <thead><tr><th>Usuário</th><th>E-mail</th>${isSuper?'<th>Empresa</th>':''}<th>Depto</th><th>Cargo</th><th>Status</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="${isSuper?7:6}" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
-        const res=await fetch('/admin/users',{headers:this.apiHeaders()});
+        const [res, companies] = await Promise.all([
+            fetch('/admin/users',{headers:this.apiHeaders()}),
+            isSuper ? this._fetchCompanies() : Promise.resolve([])
+        ]);
         const users=await res.json();
+        const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
         const tbody=document.querySelector('#u-table tbody'); tbody.innerHTML='';
-        if(!users.length){tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum usuário.</p></div></td></tr>';return;}
+        if(!users.length){tbody.innerHTML=`<tr><td colspan="${isSuper?7:6}"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum usuário.</p></div></td></tr>`;return;}
         document.getElementById('u-search').oninput=(e)=>{
             const q=e.target.value.trim().toLowerCase();
             document.querySelectorAll('#u-table tbody tr[data-search]').forEach(tr=>{
@@ -30,6 +35,7 @@ Object.assign(App, {
             tbody.innerHTML+=`<tr data-search="${(u.username+' '+u.email).toLowerCase()}">
                 <td><strong>${u.username}</strong></td>
                 <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
+                ${isSuper?`<td style="font-size:0.82rem;color:var(--text-dim)">${companyName(u.company_id)}</td>`:''}
                 <td style="font-size:0.82rem;color:var(--text-dim)">${u.department||'—'}</td>
                 <td style="font-size:0.82rem">${u.role}</td>
                 <td>${this.statusBadge(u.status)}</td>
@@ -54,11 +60,13 @@ Object.assign(App, {
     async showInviteUserModal() {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         const teamsRes=await fetch('/teams',{headers:this.apiHeaders()}); const teams=await teamsRes.json();
+        const companySelect = await this._companySelectHtml('iu-company');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Convidar Novo Usuário</h3>
             <form id="invite-user-form">
                 <div class="form-group"><label>Nome de usuário</label><input type="text" id="iu-user" class="form-control" required></div>
                 <div class="form-group"><label>E-mail corporativo</label><input type="email" id="iu-email" class="form-control" required></div>
+                ${companySelect}
                 <div class="form-group"><label>Departamento</label><input type="text" id="iu-dept" class="form-control" required></div>
                 <div class="form-group"><label>Cargo</label>
                     <select id="iu-role" class="form-control">
@@ -87,6 +95,7 @@ Object.assign(App, {
             fd.append('department',document.getElementById('iu-dept').value);
             fd.append('role',document.getElementById('iu-role').value);
             const tid=document.getElementById('iu-team').value; if(tid) fd.append('team_id',tid);
+            const companyEl=document.getElementById('iu-company'); if(companyEl) fd.append('company_id',companyEl.value);
             const res=await fetch('/admin/users/invite',{method:'POST',headers:this.apiHeaders(),body:fd});
             const data=await res.json();
             if(res.ok){this.renderAdminUsers();this.showCopyLinkModal('Convite Gerado ✓','Envie este link para o novo usuário:',data.invite_link);}
@@ -95,9 +104,10 @@ Object.assign(App, {
         modal.classList.remove('hidden');
     },
 
-    showBulkImportModal() {
+    async showBulkImportModal() {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
+        const companySelect = await this._companySelectHtml('bi-company');
         const templateCsv='username,email,department,role,team\r\njoao.silva,joao.silva@geobiogas.tech,Operações,usuario,\r\n';
         body.innerHTML=`<h3 style="margin-bottom:0.5rem;color:var(--primary)">Importar Usuários (CSV)</h3>
             <p style="color:var(--text-dim);font-size:0.83rem;margin-bottom:1rem">
@@ -105,6 +115,7 @@ Object.assign(App, {
                 <a href="#" id="bi-template-link" style="color:var(--primary-light)">Baixar modelo</a>
             </p>
             <form id="bulk-import-form">
+                ${companySelect}
                 <div class="form-group"><input type="file" id="bi-file" class="form-control" accept=".csv" required></div>
                 <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">Importar</button>
@@ -125,6 +136,7 @@ Object.assign(App, {
             if(!fileInput.files[0]) return;
             const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Importando...';
             const fd=new FormData(); fd.append('file', fileInput.files[0]);
+            const companyEl=document.getElementById('bi-company'); if(companyEl) fd.append('company_id',companyEl.value);
             const res=await fetch('/admin/users/bulk-invite',{method:'POST',headers:this.apiHeaders(),body:fd});
             const data=await res.json();
             const resultsEl=document.getElementById('bi-results');
@@ -238,21 +250,28 @@ Object.assign(App, {
 
     async renderAdminTeams() {
         this._resetContainerStyles();
+        const isSuper = this.user.role === 'super_admin';
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Gestão de Equipes',actionLabel:'+ Nova Equipe',actionFn:'App.showCreateTeamModal()'})+`
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="t-table">
-                    <thead><tr><th>Nome</th><th>Descrição</th><th>Membros</th></tr></thead>
-                    <tbody><tr><td colspan="3" class="loader">Carregando</td></tr></tbody>
+                    <thead><tr><th>Nome</th>${isSuper?'<th>Empresa</th>':''}<th>Descrição</th><th>Membros</th></tr></thead>
+                    <tbody><tr><td colspan="${isSuper?4:3}" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
-        const res=await fetch('/teams',{headers:this.apiHeaders()}); const teams=await res.json();
+        const [res, companies] = await Promise.all([
+            fetch('/teams',{headers:this.apiHeaders()}),
+            isSuper ? this._fetchCompanies() : Promise.resolve([])
+        ]);
+        const teams=await res.json();
+        const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
         const tbody=document.querySelector('#t-table tbody'); tbody.innerHTML='';
-        if(!teams.length){tbody.innerHTML='<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">🏢</div><p>Nenhuma equipe criada.</p></div></td></tr>';return;}
+        if(!teams.length){tbody.innerHTML=`<tr><td colspan="${isSuper?4:3}"><div class="empty-state"><div class="empty-icon">🏢</div><p>Nenhuma equipe criada.</p></div></td></tr>`;return;}
         teams.forEach(t=>{
             const members=t.members||[];
             tbody.innerHTML+=`<tr>
                 <td style="vertical-align:top"><strong>${t.name}</strong></td>
+                ${isSuper?`<td style="font-size:0.82rem;color:var(--text-dim);vertical-align:top">${companyName(t.company_id)}</td>`:''}
                 <td style="font-size:0.85rem;color:var(--text-dim);vertical-align:top">${t.description||'—'}</td>
                 <td style="font-size:0.85rem">
                     <div style="font-weight:600;margin-bottom:${members.length?'6px':'0'}">${members.length} membro${members.length!==1?'s':''}</div>
@@ -262,8 +281,9 @@ Object.assign(App, {
         });
     },
 
-    showCreateTeamModal() {
+    async showCreateTeamModal() {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
+        const companySelect = await this._companySelectHtml('t-company');
         let emails=[];
         const renderChips=()=>{
             const el=document.getElementById('chips'); if(!el)return;
@@ -274,6 +294,7 @@ Object.assign(App, {
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Nova Equipe</h3>
             <form id="team-form">
                 <div class="form-group"><label>Nome da equipe</label><input type="text" id="t-name" class="form-control" required></div>
+                ${companySelect}
                 <div class="form-group"><label>Líder (e-mail)</label><input type="email" id="t-admin" class="form-control" required></div>
                 <div class="form-group"><label>Descrição</label><textarea id="t-desc" class="form-control" rows="2"></textarea></div>
                 <div class="form-group">
@@ -299,6 +320,7 @@ Object.assign(App, {
             fd.append('team_admin_email',document.getElementById('t-admin').value);
             fd.append('description',document.getElementById('t-desc').value);
             if(emails.length) fd.append('emails',emails.join(','));
+            const companyEl=document.getElementById('t-company'); if(companyEl) fd.append('company_id',companyEl.value);
             const res=await fetch('/teams',{method:'POST',headers:this.apiHeaders(),body:fd});
             if(res.ok){this.closeModal();this.renderAdminTeams();}
             else{alert((await res.json()).detail||'Erro ao criar equipe.');btn.disabled=false;btn.textContent='Criar equipe';}
@@ -311,11 +333,17 @@ Object.assign(App, {
     ════════════════════════════════════════ */
     async renderAdminCourses() {
         this._resetContainerStyles(); this.currentCourse=null;
+        const isSuper = this.user.role === 'super_admin';
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({title:'Cursos',actionLabel:'+ Novo Curso',actionFn:'App.showCreateCourseModal()'})+
             `<div style="margin-bottom:1rem"><input type="text" id="c-search" class="form-control" placeholder="🔍 Buscar por título..." style="max-width:320px"></div>
             <div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
-        const res=await fetch('/courses',{headers:this.apiHeaders()}); const courses=await res.json();
+        const [res, companies] = await Promise.all([
+            fetch('/courses',{headers:this.apiHeaders()}),
+            isSuper ? this._fetchCompanies() : Promise.resolve([])
+        ]);
+        const courses=await res.json();
+        const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
         const wrapper=document.getElementById('courses-wrapper'); wrapper.innerHTML='';
         if(!courses.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso criado ainda.</p></div>';return;}
         document.getElementById('c-search').oninput=(e)=>{
@@ -327,7 +355,7 @@ Object.assign(App, {
         courses.forEach(c=>{
             wrapper.innerHTML+=`<div class="card" data-search="${c.title.toLowerCase()}" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
                 <div style="flex:1;min-width:0">
-                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.title}${c.is_standard_training?' <span style="font-size:0.65rem;font-weight:700;color:var(--primary-light);background:rgba(37,99,235,.1);padding:2px 8px;border-radius:20px;vertical-align:middle">PADRÃO</span>':''}</h3>
+                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.title}${c.is_standard_training?' <span style="font-size:0.65rem;font-weight:700;color:var(--primary-light);background:rgba(37,99,235,.1);padding:2px 8px;border-radius:20px;vertical-align:middle">PADRÃO</span>':''}${isSuper?` <span style="font-size:0.7rem;color:var(--text-dim)">· ${companyName(c.company_id)}</span>`:''}</h3>
                     <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||'Sem descrição.'}</p>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
@@ -339,12 +367,14 @@ Object.assign(App, {
         });
     },
 
-    _courseModal(id, title, desc, is_std, valMonths, isEdit) {
+    async _courseModal(id, title, desc, is_std, valMonths, isEdit) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
+        const companySelect = isEdit ? '' : await this._companySelectHtml('c-company');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">${isEdit?'Editar':'Novo'} Curso</h3>
             <form id="cform">
                 <div class="form-group"><label>Título</label><input type="text" id="c-title" class="form-control" value="${title||''}" required></div>
+                ${companySelect}
                 <div class="form-group"><label>Descrição</label><textarea id="c-desc" class="form-control" rows="3">${desc||''}</textarea></div>
                 <div class="form-group" style="display:flex;gap:8px;align-items:center">
                     <input type="checkbox" id="c-std" ${is_std?'checked':''} style="width:16px;height:16px;accent-color:var(--primary-light)">
@@ -364,6 +394,7 @@ Object.assign(App, {
             fd.append('is_standard_training',document.getElementById('c-std').checked);
             const val=document.getElementById('c-val').value; if(val) fd.append('validity_months',val);
             const certFile=document.getElementById('c-cert').files[0]; if(certFile) fd.append('certificate_template',certFile);
+            const companyEl=document.getElementById('c-company'); if(companyEl) fd.append('company_id',companyEl.value);
             await fetch(isEdit?`/courses/${id}`:'/courses',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
             this.closeModal(); this.renderAdminCourses();
         };
