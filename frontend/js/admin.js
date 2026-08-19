@@ -466,23 +466,50 @@ Object.assign(App, {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:0.5rem;color:var(--primary)">Editar Módulo</h3>
-            <p style="color:var(--text-dim);font-size:0.83rem;margin-bottom:1rem">Para trocar o vídeo, exclua e recrie o módulo.</p>
             <form id="emod-form">
                 <div class="form-group"><label>Título (opcional)</label><input type="text" id="em-title" class="form-control" value="${title}" placeholder="Em branco vira &quot;Módulo N&quot;"></div>
                 <div class="form-group"><label>Descrição</label><textarea id="em-desc" class="form-control" rows="3">${desc}</textarea></div>
                 <div class="form-group"><label>Ordem</label><input type="number" id="em-order" class="form-control" value="${order}"></div>
+                <div class="form-group"><label>Trocar vídeo (opcional)</label><input type="file" id="em-video" class="form-control" accept="video/*">
+                    <small style="color:var(--text-dim);font-size:0.76rem">Deixe em branco pra manter o vídeo atual. Enviando um novo, ele substitui o de agora — quiz e progresso dos alunos nesse módulo continuam intactos.</small>
+                </div>
+                <div class="progress-track" id="em-prog-wrap" style="display:none;margin-top:0.5rem"><div class="progress-fill" id="em-prog-bar" style="width:0%"></div></div>
+                <p id="em-status" style="font-size:0.83rem;color:var(--text-dim);text-align:center;margin-top:0.4rem;min-height:1.2em"></p>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
-                    <button type="submit" class="btn btn-primary" style="flex:1">Salvar</button>
+                    <button type="submit" id="btn-save-module" class="btn btn-primary" style="flex:1">Salvar</button>
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
                 </div>
             </form>`;
         document.getElementById('emod-form').onsubmit=async(e)=>{
-            e.preventDefault(); const fd=new FormData();
+            e.preventDefault();
+            const btn=document.getElementById('btn-save-module'), status=document.getElementById('em-status');
+            const file=document.getElementById('em-video').files[0];
+            btn.disabled=true; btn.textContent='Salvando...';
+            const fd=new FormData();
             fd.append('title',document.getElementById('em-title').value);
             fd.append('description',document.getElementById('em-desc').value);
             fd.append('order',document.getElementById('em-order').value);
-            await fetch(`/modules/${id}`,{method:'PUT',headers:this.apiHeaders(),body:fd});
-            this.closeModal(); this.renderAdminModules(this.currentCourse.id,this.currentCourse.title);
+            try{
+                if(file){
+                    document.getElementById('em-prog-wrap').style.display='block';
+                    status.textContent='Enviando vídeo novo...';
+                    const initRes=await fetch('/modules/upload/init?filename='+encodeURIComponent(file.name),{method:'POST',headers:this.apiHeaders()});
+                    const{upload_id}=await initRes.json();
+                    const chunkSize=5*1024*1024, totalChunks=Math.ceil(file.size/chunkSize);
+                    for(let i=0;i<totalChunks;i++){
+                        const chunk=file.slice(i*chunkSize,Math.min((i+1)*chunkSize,file.size));
+                        const cfd=new FormData(); cfd.append('upload_id',upload_id); cfd.append('filename',file.name); cfd.append('chunk_index',i); cfd.append('chunk',chunk);
+                        await fetch('/modules/upload/chunk',{method:'POST',headers:this.apiHeaders(),body:cfd});
+                        const pct=Math.round(((i+1)/totalChunks)*100);
+                        document.getElementById('em-prog-bar').style.width=pct+'%';
+                        status.textContent=`Enviando vídeo novo... ${pct}%`;
+                    }
+                    fd.append('upload_id',upload_id); fd.append('filename',file.name);
+                    status.textContent='Finalizando...';
+                }
+                await fetch(`/modules/${id}`,{method:'PUT',headers:this.apiHeaders(),body:fd});
+                this.closeModal(); this.renderAdminModules(this.currentCourse.id,this.currentCourse.title);
+            }catch(err){status.textContent='Erro ao salvar. Tente novamente.';btn.disabled=false;btn.textContent='Salvar';}
         };
         modal.classList.remove('hidden');
     },

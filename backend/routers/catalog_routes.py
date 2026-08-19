@@ -210,9 +210,17 @@ def update_module(
     title: str = Form(None),
     description: str = Form(""),
     order: int = Form(1),
+    upload_id: str = Form(None),
+    filename: str = Form(None),
+    video: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
+    """Título/descrição/ordem sempre atualizam. Vídeo é opcional — se vier
+    (upload direto OU upload_id de um upload em pedaços já finalizado),
+    substitui o vídeo do módulo no lugar, preservando id/quiz/progresso
+    dos alunos (antes, a única forma de trocar vídeo era excluir e
+    recriar o módulo inteiro, perdendo tudo isso)."""
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
@@ -223,8 +231,43 @@ def update_module(
     module.description = description
     module.order = order
 
+    old_video_url = module.video_url
+    new_video_url = None
+
+    if video and video.filename:
+        check_upload_size(video.size or 0)
+        video_filename = safe_filename(video.filename, ALLOWED_VIDEO_EXT)
+        video_path = os.path.join(UPLOADS_DIR, video_filename)
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
+        new_video_url = f"/video/{video_filename}"
+
+    if upload_id and filename:
+        safe_name = sanitize_filename(filename, ALLOWED_VIDEO_EXT)
+        temp_file_path = os.path.join(UPLOADS_DIR, "temp", f"{upload_id}_{safe_name}")
+        if os.path.exists(temp_file_path):
+            final_filename = f"{upload_id}_{safe_name}"
+            final_file_path = os.path.join(UPLOADS_DIR, final_filename)
+            shutil.move(temp_file_path, final_file_path)
+            new_video_url = f"/video/{final_filename}"
+
+    if new_video_url:
+        module.video_url = new_video_url
+
     db.commit()
     db.refresh(module)
+
+    # Remove o arquivo antigo do disco só depois do commit confirmar —
+    # se algo desse errado antes, o módulo continuaria apontando pro
+    # arquivo velho, então não faria sentido já ter apagado ele.
+    if new_video_url and old_video_url:
+        old_path = os.path.join(UPLOADS_DIR, os.path.basename(old_video_url))
+        if os.path.isfile(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+
     return module
 
 @router.delete("/modules/{module_id}")
