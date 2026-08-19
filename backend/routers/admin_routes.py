@@ -63,13 +63,29 @@ def update_user_status(user_id: int, new_status: str = Form(None), role: str = F
     return {"message": "User updated"}
 
 @router.post("/admin/users/{user_id}/role")
-def update_user_role(user_id: int, role: str = Form(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def update_user_role(
+    user_id: int,
+    role: str = Form(...),
+    team_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin"]))
+):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if role == "admin" and not auth.is_allowed_email_domain(user.email):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
     user.role = role
+    # team_id vem vazio quando a opção selecionada é "Sem Equipe (padrão)" —
+    # cai no mesmo time padrão usado em qualquer outro fluxo (convite, etc.),
+    # nunca fica sem time (Time é obrigatório em User).
+    if team_id:
+        team = db.query(models.Team).filter(models.Team.id == team_id).first()
+        if not team:
+            raise HTTPException(status_code=404, detail="Equipe não encontrada")
+        user.team_id = team.id
+    else:
+        user.team_id = auth.get_default_team(db).id
     db.commit()
     return {"message": "Role atualizado com sucesso"}
 
@@ -78,7 +94,7 @@ def admin_reset_password(user_id: int, db: Session = Depends(get_db), current_us
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.hashed_password = get_password_hash("Mudar@123")
+    user.hashed_password = get_password_hash(auth.TEMP_PASSWORD)
     user.must_change_password = True
 
     # ✅ BUG 2 CORRIGIDO: garante que o usuário fique "ativo" ao ter senha resetada pelo admin,

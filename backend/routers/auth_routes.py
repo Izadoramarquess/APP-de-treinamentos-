@@ -31,7 +31,7 @@ def change_password(
 ):
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 6 caracteres.")
-    if new_password == "Mudar@123":
+    if new_password == auth.TEMP_PASSWORD:
         raise HTTPException(status_code=400, detail="Escolha uma senha diferente da temporária.")
     current_user.hashed_password = get_password_hash(new_password)
     current_user.must_change_password = False
@@ -39,7 +39,11 @@ def change_password(
     return {"message": "Senha alterada com sucesso!"}
 
 @router.post("/invite/accept")
-def accept_invite(token: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+def accept_invite(token: str = Form(...), db: Session = Depends(get_db)):
+    """Ativa a conta com a senha temporária padrão (Mudar@123*) — a pessoa
+    não escolhe senha própria aqui, só confirma que quer ativar o acesso.
+    No primeiro login, must_change_password força a troca (mesmo fluxo já
+    usado quando um admin reseta a senha de alguém)."""
     user = db.query(models.User).filter(models.User.invite_token == token).first()
     if not user:
         raise HTTPException(status_code=400, detail="Token inválido.")
@@ -47,16 +51,11 @@ def accept_invite(token: str = Form(...), password: str = Form(...), db: Session
         user.status = "convite_expirado"
         db.commit()
         raise HTTPException(status_code=400, detail="Token expirado.")
-    user.hashed_password = get_password_hash(password)
+    user.hashed_password = get_password_hash(auth.TEMP_PASSWORD)
     user.status = "ativo"
     user.invite_token = None
     user.invite_expires_at = None
-
-    # If they are accepting via UI, we should still allow standard pw but normally they'd type it.
-    if password == "Mudar@123":
-        user.must_change_password = True
-    else:
-        user.must_change_password = False
+    user.must_change_password = True
 
     db.commit()
-    return {"message": "Conta ativada com sucesso!"}
+    return {"message": "Conta ativada com sucesso!", "temp_password": auth.TEMP_PASSWORD}

@@ -1,5 +1,6 @@
 """Dependências e helpers compartilhados entre os routers (backend/routers/*)."""
 import datetime
+import mimetypes
 import os
 import re
 import uuid
@@ -134,8 +135,18 @@ def _mark_module_complete(db: Session, user_id: int, module_id: int, score: floa
     return certificate_issued
 
 # ---------------- Upload: nome de arquivo seguro + limites ----------------
-ALLOWED_VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv"}
+# .mkv fora de propósito: mesmo com upload aceito, esse container não toca
+# inline em Chrome/Safari (que não têm suporte nativo a Matroska no <video>),
+# então o vídeo "sobe certinho" mas nunca funciona pra quem assiste. .mov e
+# .webm ficam porque tocam na maioria dos casos reais (H.264/AAC ou VP8/VP9).
+ALLOWED_VIDEO_EXT = {".mp4", ".mov", ".webm"}
 ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
+# Content-Type explícito por extensão — não confia no mimetypes.guess_type()
+# do SO, que varia entre Windows (dev) e a imagem Debian slim do container
+# de produção e pode faltar mapeamento pra algumas extensões de vídeo.
+for _ext, _mime in {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}.items():
+    mimetypes.add_type(_mime, _ext)
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "500")) * 1024 * 1024
 _SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 

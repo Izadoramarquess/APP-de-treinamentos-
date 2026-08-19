@@ -37,6 +37,7 @@ Object.assign(App, {
                     ${u.status==='pending'?this.actionBtn('✓ Aprovar',`App.changeUserStatus(${u.id},'ativo')`,'success'):''}
                     ${u.status==='pending'?this.actionBtn('✕ Rejeitar',`App.changeUserStatus(${u.id},'rejected')`,'danger'):''}
                     ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0})`)}
+                    ${this.actionBtn('🎯 Curso',`App.showAssignCourseModal(${u.id},'${u.username.replace(/'/g,"\\'")}')`)}
                     ${this.actionBtn('🔑 Resetar',`App.triggerPasswordReset(${u.id},'${u.username}')`)}
                     ${this.user.id!==u.id?this.actionBtn('🗑',`App.deleteUser(${u.id},'${u.username}')`,'danger'):''}
                 </div></td>
@@ -168,7 +169,9 @@ Object.assign(App, {
             </form>`;
         document.getElementById('role-form').onsubmit=async(e)=>{
             e.preventDefault();
-            const fd=new FormData(); fd.append('role',document.getElementById('e-role').value);
+            const fd=new FormData();
+            fd.append('role',document.getElementById('e-role').value);
+            fd.append('team_id',document.getElementById('e-team').value);
             const res=await fetch(`/admin/users/${id}/role`,{method:'POST',headers:this.apiHeaders(),body:fd});
             if(!res.ok){alert((await res.json()).detail);return;}
             this.closeModal(); this.renderAdminUsers();
@@ -187,7 +190,7 @@ Object.assign(App, {
         if(!confirm(`Resetar a senha de "${username}" para a senha padrão?`)) return;
         const res=await fetch(`/admin/users/${id}/reset-password`,{method:'POST',headers:this.apiHeaders()});
         const data=await res.json();
-        if(res.ok) this.showCopyLinkModal('Senha Resetada ✓',`Envie este link para ${username}:`,data.reset_link);
+        if(res.ok) this.showCopyLinkModal('Senha Resetada ✓',`A senha de ${username} já virou <strong>Mudar@123*</strong> — pode avisar direto por essa. Se preferir mandar um link em vez disso, aqui está:`,data.reset_link);
         else alert(data.detail||'Erro ao resetar.');
     },
 
@@ -418,6 +421,7 @@ Object.assign(App, {
                     <h4 style="margin:0.15rem 0 0;font-size:0.95rem">${m.title}</h4>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
+                    ${m.video_url?this.actionBtn('▶ Testar vídeo',`App.previewModuleVideo('${m.video_url}','${m.title.replace(/'/g,"\\'")}')`,'primary'):'<span style="font-size:0.75rem;color:#ef4444">sem vídeo</span>'}
                     ${this.actionBtn('✏️',`App.showEditModuleModal(${m.id},'${m.title.replace(/'/g,"\\'")}','${(m.description||'').replace(/'/g,"\\'")}',${m.order||1})`)}
                     ${this.actionBtn('🗑',`App.deleteModule(${m.id},'${m.title.replace(/'/g,"\\'")}',${courseId})`,'danger')}
                     ${this.actionBtn('🎮 Quiz',`App.openQuizEditor(${m.id},'${m.video_url}')`)}
@@ -499,6 +503,25 @@ Object.assign(App, {
                 setTimeout(()=>this.renderAdminModules(courseId,this.currentCourse.title),1000);
             }catch(err){status.textContent='Erro no upload. Tente novamente.';btn.disabled=false;btn.textContent='Fazer upload';}
         };
+    },
+
+    // Deixa o admin conferir se o vídeo enviado realmente toca no navegador
+    // — sem isso, um upload com problema (codec incompatível, arquivo
+    // incompleto) só é descoberto quando um aluno reclamar dias depois.
+    previewModuleVideo(videoUrl, title) {
+        const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
+        modal.classList.remove('hidden');
+        body.className='modal-player';
+        body.innerHTML=`
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+                <h3 style="margin:0;font-size:1rem;color:white;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80%">🔍 Testando: ${title}</h3>
+                <button onclick="App.closeModal()" style="background:rgba(255,255,255,.12);border:none;cursor:pointer;width:30px;height:30px;border-radius:50%;color:white;font-size:1.1rem;display:flex;align-items:center;justify-content:center;flex-shrink:0">×</button>
+            </div>
+            <video id="preview-video" src="${videoUrl}" controls autoplay style="width:100%;display:block;max-height:68vh;background:#000;border-radius:10px"></video>
+            <p id="preview-status" style="color:rgba(255,255,255,.6);font-size:0.82rem;text-align:center;margin-top:0.75rem">Carregando vídeo...</p>`;
+        const video=document.getElementById('preview-video'), status=document.getElementById('preview-status');
+        video.onloadeddata=()=>{ status.textContent='✓ Vídeo carregou e está tocando normalmente.'; status.style.color='#86efac'; };
+        video.onerror=()=>{ status.textContent='⚠️ O navegador não conseguiu tocar esse vídeo — provavelmente o formato/codec não é compatível (ex.: .mkv ou .mov com codec incomum). Reenvie em .mp4 (H.264).'; status.style.color='#fca5a5'; };
     },
 
     openQuizEditor(moduleId, videoUrl) {

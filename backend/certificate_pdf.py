@@ -8,6 +8,7 @@ from io import BytesIO
 from reportlab.lib.pagesizes import landscape, A4
 from reportlab.lib.units import cm
 from reportlab.lib.colors import HexColor
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from deps import UPLOADS_DIR
@@ -15,6 +16,9 @@ from deps import UPLOADS_DIR
 PRIMARY = HexColor("#1e3a8a")
 ACCENT = HexColor("#2563eb")
 TEXT_DIM = HexColor("#475569")
+SIGNATURE_LINE = HexColor("#94a3b8")
+
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
 
 
 def _template_path(certificate_template_url):
@@ -36,11 +40,38 @@ def generate_certificate_pdf(username: str, course_title: str, issued_at, expire
     else:
         _draw_default_background(c, w, h)
 
+    _draw_logo(c, w, h)
     _draw_text(c, w, h, username, course_title, issued_at, expires_at)
+    _draw_signature_line(c, w, h)
 
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+def _draw_logo(c, w, h):
+    if not os.path.isfile(LOGO_PATH):
+        return
+    img = ImageReader(LOGO_PATH)
+    iw, ih = img.getSize()
+    logo_w = 3.2 * cm
+    logo_h = logo_w * (ih / iw)
+    c.drawImage(img, (w - logo_w) / 2, h - 1.9 * cm - logo_h, width=logo_w, height=logo_h,
+                preserveAspectRatio=True, mask="auto")
+
+
+def _draw_signature_line(c, w, h):
+    """Espaço para assinatura — uma linha em branco pra assinar na mão (ou
+    digitalmente depois) mais o nome de quem responde pelo treinamento."""
+    line_y = 5.4 * cm
+    line_w = 7 * cm
+    line_x = (w - line_w) / 2
+    c.setStrokeColor(SIGNATURE_LINE)
+    c.setLineWidth(1)
+    c.line(line_x, line_y, line_x + line_w, line_y)
+    c.setFillColor(TEXT_DIM)
+    c.setFont("Helvetica", 10)
+    c.drawCentredString(w / 2, line_y - 0.5 * cm, "Geo Bio Gas & Carbon")
 
 
 def _draw_default_background(c, w, h):
@@ -57,23 +88,23 @@ def _draw_default_background(c, w, h):
 def _draw_text(c, w, h, username, course_title, issued_at, expires_at):
     c.setFillColor(PRIMARY)
     c.setFont("Helvetica-Bold", 34)
-    c.drawCentredString(w / 2, h - 4.2 * cm, "CERTIFICADO DE CONCLUSÃO")
+    c.drawCentredString(w / 2, h - 5.0 * cm, "CERTIFICADO DE CONCLUSÃO")
 
     c.setFillColor(TEXT_DIM)
     c.setFont("Helvetica", 14)
-    c.drawCentredString(w / 2, h - 6 * cm, "Certificamos que")
+    c.drawCentredString(w / 2, h - 6.8 * cm, "Certificamos que")
 
     c.setFillColor(PRIMARY)
     c.setFont("Helvetica-Bold", 26)
-    c.drawCentredString(w / 2, h - 7.6 * cm, username)
+    c.drawCentredString(w / 2, h - 8.4 * cm, username)
 
     c.setFillColor(TEXT_DIM)
     c.setFont("Helvetica", 14)
-    c.drawCentredString(w / 2, h - 9.2 * cm, "concluiu com êxito o curso")
+    c.drawCentredString(w / 2, h - 10.0 * cm, "concluiu com êxito o curso")
 
     c.setFillColor(ACCENT)
     c.setFont("Helvetica-Bold", 20)
-    c.drawCentredString(w / 2, h - 10.6 * cm, course_title)
+    c.drawCentredString(w / 2, h - 11.4 * cm, course_title)
 
     issued_str = issued_at.strftime("%d/%m/%Y") if issued_at else "—"
     expires_str = expires_at.strftime("%d/%m/%Y") if expires_at else "—"

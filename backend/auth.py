@@ -24,6 +24,11 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
+# Senha temporária padrão — usada tanto quando um admin reseta a senha de
+# alguém quanto na ativação de convite (a pessoa não escolhe senha própria
+# nesses casos). must_change_password sempre força a troca no próximo login.
+TEMP_PASSWORD = "Mudar@123*"
+
 # Domínios de e-mail corporativo permitidos, configurados no .env.
 ALLOWED_EMAIL_DOMAINS = [
     d.strip().lower() for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "geobiogas.tech").split(",") if d.strip()

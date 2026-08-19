@@ -151,7 +151,7 @@ requests.post(f"{BASE_URL}/admin/users/{user_id}/reset-password", headers=admin_
 
 print("Logando como colaborador...")
 # Login colaborador
-colab_token, login_res = login("colaborador_teste", "Mudar@123")
+colab_token, login_res = login("colaborador_teste", "Mudar@123*")
 colab_headers = {"Authorization": f"Bearer {colab_token}"}
 
 print("Iniciando TC-033...")
@@ -161,11 +161,11 @@ else:
     add_result("TC-033", "Troca de senha obrigatória no 1º login", "❌ Falhou", "Flag não retornada.")
 
 print("Iniciando TC-034...")
-r_pass1 = requests.post(f"{BASE_URL}/auth/change-password", headers=colab_headers, data={"new_password": "Mudar@123"})
+r_pass1 = requests.post(f"{BASE_URL}/auth/change-password", headers=colab_headers, data={"new_password": "Mudar@123*"})
 if r_pass1.status_code == 400 and "diferente" in r_pass1.text:
-    add_result("TC-034", "Não pode salvar Mudar@123 como nova senha", "✅ Passou", "API bloqueou a senha temporária.")
+    add_result("TC-034", "Não pode salvar Mudar@123* como nova senha", "✅ Passou", "API bloqueou a senha temporária.")
 else:
-    add_result("TC-034", "Não pode salvar Mudar@123 como nova senha", "❌ Falhou", f"Esperava 400, obteve {r_pass1.status_code}.")
+    add_result("TC-034", "Não pode salvar Mudar@123* como nova senha", "❌ Falhou", f"Esperava 400, obteve {r_pass1.status_code}.")
 
 print("Iniciando TC-035...")
 r_pass2 = requests.post(f"{BASE_URL}/auth/change-password", headers=colab_headers, data={"new_password": "123"})

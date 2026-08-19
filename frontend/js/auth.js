@@ -87,19 +87,21 @@ Object.assign(App, {
         container.style.maxWidth='100%'; container.style.margin='0'; container.style.padding='0';
         container.innerHTML = this._authWrap(`
             <h2 style="margin-bottom:0.5rem;font-weight:700;color:var(--primary)">Ativar convite</h2>
-            <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1.5rem">Crie uma senha para acessar o GeoTrilha.</p>
+            <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1rem">Clique abaixo para ativar sua conta na GeoTrilha.</p>
+            <div style="padding:0.9rem 1rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:#1e40af;font-size:0.85rem;margin-bottom:1.5rem">
+                Sua senha temporária de acesso é <strong>Mudar@123*</strong> — você vai trocar por uma senha sua assim que entrar.
+            </div>
             <form id="invite-form">
                 <input type="hidden" id="i-token" value="${token}">
-                <div class="form-group"><label>Senha</label><input type="password" id="i-pass" class="form-control" placeholder="Mínimo 6 caracteres" required minlength="6"></div>
                 <button type="submit" class="btn btn-primary" style="width:100%;padding:0.75rem">Ativar acesso</button>
             </form>`);
         document.getElementById('invite-form').onsubmit = async (e) => {
             e.preventDefault();
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Ativando...';
-            const fd=new FormData(); fd.append('token',document.getElementById('i-token').value); fd.append('password',document.getElementById('i-pass').value);
+            const fd=new FormData(); fd.append('token',document.getElementById('i-token').value);
             const res=await fetch('/invite/accept',{method:'POST',body:fd});
             const data=await res.json();
-            if(res.ok){alert(data.message||'Acesso ativado!');window.location.href='/';}
+            if(res.ok){alert('Conta ativada! Entre com a senha temporária Mudar@123* — você vai trocar por uma sua em seguida.');window.location.href='/';}
             else{alert(data.detail||'Erro ao ativar.');btn.disabled=false;btn.textContent='Ativar acesso';}
         };
     },
@@ -151,7 +153,7 @@ Object.assign(App, {
             const p1=document.getElementById('fc-p1').value, p2=document.getElementById('fc-p2').value;
             const err=document.getElementById('fc-err');
             if(p1!==p2){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
-            if(p1==='Mudar@123'){err.textContent='Escolha uma senha diferente da temporária.';err.style.display='block';return;}
+            if(p1==='Mudar@123*'){err.textContent='Escolha uma senha diferente da temporária.';err.style.display='block';return;}
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Salvando...';
             const fd=new FormData(); fd.append('new_password',p1);
             const res=await fetch('/auth/change-password',{method:'POST',headers:this.apiHeaders(),body:fd});
