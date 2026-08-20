@@ -1,58 +1,138 @@
-## Rodando Localmente (Seu Próprio Servidor)
-Como você decidiu não usar o Vercel e rodar no seu próprio servidor local, o processo é muito simples:
+# Deploy — GeoTrilha LMS
 
-1. **Instale as dependências**:
-   Abra o seu terminal na pasta do projeto e rode:
-   ```bash
-   pip install -r backend/requirements.txt
-   ```
-
-2. **Inicie o servidor**:
-   Rode o comando:
-   ```bash
-   python backend/main.py
-   ```
-
-3. **Acesse no Navegador**:
-   A aplicação estará disponível em `http://localhost:8000`. 
-   
-O backend está configurado para entregar os arquivos do frontend automaticamente.
+Tudo roda via **Docker Compose**. Você precisa apenas de Docker instalado no servidor.
 
 ---
 
-## Requisitos de Ambiente
-A aplicação agora utiliza variáveis de ambiente para configuração sensível:
-- `DATABASE_URL`: Link de conexão PostgreSQL (ex: `postgresql://user:pass@host:5432/db`)
-- `PORT`: Porta onde o servidor vai rodar (padrão 8000)
-- `ALLOWED_ORIGINS`: Lista de domínios permitidos para CORS (separados por vírgula)
+## Requisitos
 
-## Localização dos Arquivos
-O arquivo principal do frontend (`index.html`) está localizado dentro da pasta `frontend/`. Quando você sobe para o GitHub, ele não aparece na raiz do repositório por questões de organização (separação de Backend e Frontend).
+- Linux (Ubuntu 22.04+ recomendado)
+- [Docker](https://docs.docker.com/engine/install/ubuntu/) + Docker Compose plugin
 
-- **Frontend**: `frontend/index.html`
-- **Backend**: `backend/main.py`
+```bash
+# Instalar Docker (Ubuntu)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Faça logout e login novamente para o grupo ter efeito
+```
 
-## Opções de Deploy
+---
 
-### 1. Vercel (Somente Frontend)
-Se você quer apenas visualizar a interface:
-1. No Vercel, importe seu repositório.
-2. Nas configurações de "Framework Preset", selecione `Other`.
-3. Em **Root Directory**, selecione a pasta `frontend`.
-4. Clique em Deploy.
+## 1ª vez: Subir o projeto
 
-### 2. Render / Railway / Fly.io (Full Stack - Recomendado)
-Como a aplicação tem um Backend em Python, você precisa de um serviço que suporte Docker ou Python:
-1. Conecte seu GitHub ao serviço escolhido.
-2. O serviço detectará o `Dockerfile` ou o `docker-compose.yml`.
-3. Configure as variáveis de ambiente (veja acima).
-4. O Backend está configurado para servir o Frontend automaticamente.
+```bash
+# 1. Clonar o repositório
+git clone https://github.com/Izadoramarquess/APP-de-treinamentos-.git
+cd APP-de-treinamentos-
 
-### 3. GitHub Pages (Somente Frontend)
-1. Vá em **Settings** > **Pages** no seu repositório.
-2. Se você quiser usar a pasta `docs`, você deve mover o conteúdo de `frontend/` para uma pasta chamada `docs/` na raiz.
-3. Caso contrário, o GitHub Pages não encontrará o `index.html` na raiz.
+# 2. Criar o arquivo de configuração
+cp .env.example .env
+nano .env   # Preencha SECRET_KEY e DB_PASSWORD — a aplicação recusa subir sem eles
 
-## Notas de Produção
-- O Backend está configurado para servir a pasta `frontend/` automaticamente se estiver no mesmo nível de diretório.
-- Certifique-se de alterar a `SECRET_KEY` no arquivo `auth.py` para uma chave segura antes do deploy real.
+# 3. Preparar a pasta de uploads para o usuário não-root do container (UID 1000)
+mkdir -p backend/uploads
+sudo chown -R 1000:1000 backend/uploads
+
+# 4. Subir tudo
+docker compose up --build -d
+
+# 5. Verificar se está rodando
+docker compose ps
+```
+
+O app estará disponível em `http://IP-DO-SERVIDOR:8000`
+
+**Login do admin:** a senha inicial é gerada automaticamente e aparece só
+uma vez no log de inicialização — pegue com:
+
+```bash
+docker compose logs backend | grep -A2 "USUÁRIO ADMIN CRIADO"
+```
+
+O admin é obrigado a trocar essa senha no primeiro login.
+
+---
+
+## Atualizar o projeto (sem perder o banco)
+
+```bash
+bash update.sh
+```
+
+Isso faz `git pull` e reconstrói apenas os containers do app.
+**O banco de dados (volume Docker) é sempre preservado.**
+
+---
+
+## Parar / Reiniciar
+
+```bash
+# Parar sem apagar nada
+docker compose stop
+
+# Reiniciar
+docker compose start
+
+# Ver logs em tempo real
+docker compose logs -f backend
+```
+
+---
+
+## Backup do banco de dados
+
+```bash
+# Fazer backup
+docker compose exec db pg_dump -U user training_db > backup_$(date +%Y%m%d).sql
+
+# Restaurar backup
+cat backup_YYYYMMDD.sql | docker compose exec -T db psql -U user training_db
+```
+
+---
+
+## IMPORTANTE — O que NUNCA fazer
+
+```bash
+# ❌ NUNCA execute este comando — apaga o banco de dados permanentemente
+docker compose down -v
+```
+
+Para parar o serviço com segurança use `docker compose stop` ou `docker compose down` (sem o `-v`).
+
+---
+
+## Proxy reverso com Nginx (opcional — para usar domínio + HTTPS)
+
+```bash
+sudo apt install nginx certbot python3-certbot-nginx -y
+
+sudo nano /etc/nginx/sites-available/geotrilha
+```
+
+```nginx
+server {
+    listen 80;
+    server_name seu-dominio.com;
+
+    client_max_body_size 500M;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/geotrilha /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# SSL gratuito com Let's Encrypt
+sudo certbot --nginx -d seu-dominio.com
+```
+
+Depois edite o `.env` com o domínio real e rode `bash update.sh`.

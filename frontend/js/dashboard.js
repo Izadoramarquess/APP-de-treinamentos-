@@ -1,0 +1,476 @@
+/* ════════════════════════════════════════
+   DASHBOARDS — telas iniciais de cada papel (admin, liderança, aluno)
+════════════════════════════════════════ */
+Object.assign(App, {
+    // Usado tanto pela tela de Progresso do admin quanto por Minha Equipe
+    // (liderança) — ambas consomem o mesmo courses[] de /team/progress.
+    _progressCoursesDetailHtml(courses) {
+        if(!courses || !courses.length) return `<p style="margin:0;color:var(--text-dim);font-size:0.82rem">Nenhum curso matriculado.</p>`;
+        return `<table style="width:100%;font-size:0.8rem;border-collapse:collapse">
+            <thead><tr style="color:var(--text-dim);text-align:left">
+                <th style="padding:4px 8px;font-weight:600">Curso</th>
+                <th style="padding:4px 8px;font-weight:600">Status</th>
+                <th style="padding:4px 8px;font-weight:600">Progresso</th>
+                <th style="padding:4px 8px;font-weight:600">Certificado</th>
+            </tr></thead>
+            <tbody>
+            ${courses.map(c=>{
+                const pct=c.percent||0;
+                const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                const st=this._courseStatusBadge(c.status);
+                let certHtml = `<span style="color:var(--text-dim)">—</span>`;
+                if(c.certificate_issued){
+                    const info=this._certificateStatusInfo(c.certificate_expires_at);
+                    const dateStr = c.certificate_expires_at ? new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '';
+                    const label = info ? `${info.label}${dateStr?' · até '+dateStr:''}` : '✓ Emitido';
+                    const color = info ? info.color : '#16a34a';
+                    certHtml = `<span style="display:inline-flex;align-items:center;gap:6px">
+                        <span style="color:${color};font-weight:600">${label}</span>
+                        <button onclick="App._downloadCertificate(${c.certificate_id}, this)" style="padding:2px 8px;border-radius:6px;font-size:0.7rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif">⬇ PDF</button>
+                    </span>`;
+                }
+                return `<tr>
+                    <td style="padding:4px 8px">${c.course_title}</td>
+                    <td style="padding:4px 8px"><span style="padding:2px 8px;border-radius:12px;font-size:0.72rem;font-weight:700;color:${st.color};background:${st.color}18">${st.label}</span></td>
+                    <td style="padding:4px 8px;min-width:140px">
+                        <div style="display:flex;align-items:center;gap:0.5rem">
+                            <div class="progress-track" style="flex:1;height:5px"><div class="progress-fill" style="width:${pct}%;background:${barColor}"></div></div>
+                            <span style="font-weight:700;color:${barColor};width:30px;text-align:right">${pct}%</span>
+                        </div>
+                    </td>
+                    <td style="padding:4px 8px">${certHtml}</td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+        </table>`;
+    },
+
+    // Conta quantos cursos, em cada bucket courses[] de um grupo de pessoas,
+    // estão em cada estado — usado nos cards de resumo de Progresso/Equipe.
+    _countCourseStatuses(members) {
+        const counts={matriculado:0, em_andamento:0, finalizado:0};
+        members.forEach(u=>(u.courses||[]).forEach(c=>{ if(counts[c.status]!==undefined) counts[c.status]++; }));
+        return counts;
+    },
+
+    // Achata members[] (com courses[] aninhado) numa linha por (pessoa, curso)
+    // pro CSV — pessoa sem nenhum curso ainda vira uma linha em branco.
+    _exportProgressCsv(members, filename) {
+        const headers=['Pessoa','E-mail','Equipe','Cargo','Curso','Status','Progresso (%)','Certificado','Validade do Certificado'];
+        const rows=[];
+        members.forEach(u=>{
+            if(!u.courses || !u.courses.length){
+                rows.push([u.username,u.email,u.team_name||'',u.role,'','','','','']);
+                return;
+            }
+            u.courses.forEach(c=>{
+                const certDate=c.certificate_expires_at?new Date(c.certificate_expires_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}):'';
+                rows.push([u.username,u.email,u.team_name||'',u.role,c.course_title,this._courseStatusBadge(c.status).label,c.percent,c.certificate_issued?'Sim':'Não',certDate]);
+            });
+        });
+        this._downloadCsv(filename, headers, rows);
+    },
+
+    _toggleProgressDetail(rowId) {
+        const row = document.getElementById(rowId);
+        if(row) row.classList.toggle('hidden');
+    },
+
+    // Donut reaproveitado em Progresso (admin) e Minha Equipe (líder) — os
+    // dois têm o mesmo formato de dado (contagem matriculado/andamento/
+    // finalizado) e o mesmo objetivo (visão rápida da distribuição atual).
+    _renderStatusDonut(canvasId, counts) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || typeof Chart === 'undefined') return;
+        const data = [counts.matriculado, counts.em_andamento, counts.finalizado];
+        if (canvas._chart) { canvas._chart.data.datasets[0].data = data; canvas._chart.update(); return; }
+        canvas._chart = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels: ['Matriculados', 'Em andamento', 'Finalizados'],
+                datasets: [{ data, backgroundColor: ['#f59e0b', '#3b82f6', '#22c55e'], borderWidth: 0 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } }
+        });
+    },
+
+    _statusDonutLegendHtml(counts) {
+        return `<div style="display:flex;flex-direction:column;gap:8px;font-size:0.82rem">
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#f59e0b"></span>Matriculados · ${counts.matriculado}</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6"></span>Em andamento · ${counts.em_andamento}</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#22c55e"></span>Finalizados · ${counts.finalizado}</span>
+        </div>`;
+    },
+
+    async renderAdminProgress() {
+        this._resetContainerStyles();
+        const isSuper = this.user.role === 'super_admin';
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:'Progresso'})+`
+            <div class="grid-stats" id="prog-stats" style="margin-bottom:1rem">
+                <div class="stat-card"><div class="stat-icon">📥</div><div class="stat-info"><div class="stat-value" id="pg-matriculado">—</div><div class="stat-label">Matriculados</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="pg-andamento">—</div><div class="stat-label">Em Andamento</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="pg-finalizado">—</div><div class="stat-label">Finalizados</div></div></div>
+            </div>
+            <div class="card" style="margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+                ${isSuper?`<label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Empresa:</label>
+                <select id="prog-company-filter" class="form-control" style="max-width:220px;width:auto">
+                    <option value="">Todas as empresas</option>
+                </select>`:''}
+                <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Líder:</label>
+                <select id="prog-leader-filter" class="form-control" style="max-width:220px;width:auto">
+                    <option value="">Todos os líderes</option>
+                </select>
+                <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
+                <select id="prog-team-filter" class="form-control" style="max-width:260px;width:auto">
+                    <option value="">Todas as equipes</option>
+                </select>
+                <button id="prog-export-btn" style="margin-left:auto;padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬇ Exportar CSV</button>
+            </div>
+            <div class="card" style="margin-bottom:1rem;display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
+                <div style="position:relative;width:140px;height:140px;flex-shrink:0"><canvas id="prog-donut"></canvas></div>
+                <div id="prog-donut-legend"></div>
+            </div>
+            <div class="card" style="overflow-x:auto;padding:0">
+                <table id="progress-table">
+                    <thead><tr><th>Pessoa</th><th>E-mail</th><th>Equipe</th><th>Cargo</th><th>Progresso Geral</th><th>Cursos</th></tr></thead>
+                    <tbody><tr><td colspan="6" class="loader">Carregando</td></tr></tbody>
+                </table>
+            </div>`;
+
+        const [progRes, teamsRes, companies] = await Promise.all([
+            fetch('/team/progress', {headers:this.apiHeaders()}).catch(()=>null),
+            fetch('/teams', {headers:this.apiHeaders()}).catch(()=>null),
+            isSuper ? this._fetchCompanies() : Promise.resolve([])
+        ]);
+        const allMembers = (progRes && progRes.ok) ? await progRes.json() : [];
+        const teams = (teamsRes && teamsRes.ok) ? await teamsRes.json() : [];
+        const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
+
+        if (isSuper) {
+            const companySel = document.getElementById('prog-company-filter');
+            const companiesSeen = new Map();
+            allMembers.forEach(m=>{ if(m.company_id!=null) companiesSeen.set(m.company_id, companyName(m.company_id)); });
+            [...companiesSeen.entries()].sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).forEach(([id,name])=>{
+                companySel.innerHTML += `<option value="${id}">${name}</option>`;
+            });
+        }
+
+        const filterSel = document.getElementById('prog-team-filter');
+        const teamsSeen = new Map();
+        allMembers.forEach(m=>{ if(m.team_id!=null) teamsSeen.set(m.team_id, m.team_name); });
+        [...teamsSeen.entries()].sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).forEach(([id,name])=>{
+            filterSel.innerHTML += `<option value="${id}">${name}</option>`;
+        });
+
+        // Líder é uma pessoa, não uma equipe — um líder pode liderar mais de
+        // uma equipe, então o filtro guarda o CONJUNTO de equipes que cada
+        // líder lidera (vem de team.leaders, já que /team/progress só traz
+        // a equipe-base de cada linha, não quem lidera o quê).
+        const leaderSel = document.getElementById('prog-leader-filter');
+        const leadersSeen = new Map();
+        teams.forEach(t=>(t.leaders||[]).forEach(l=>{
+            if(!leadersSeen.has(l.id)) leadersSeen.set(l.id, {username:l.username, teamIds:new Set()});
+            leadersSeen.get(l.id).teamIds.add(t.id);
+        }));
+        [...leadersSeen.entries()].sort((a,b)=>a[1].username.localeCompare(b[1].username)).forEach(([id,info])=>{
+            leaderSel.innerHTML += `<option value="${id}">${info.username}</option>`;
+        });
+
+        let currentFiltered = allMembers;
+        document.getElementById('prog-export-btn').onclick = () => this._exportProgressCsv(currentFiltered, 'progresso.csv');
+
+        const renderRows = () => {
+            const tbody=document.querySelector('#progress-table tbody'); tbody.innerHTML='';
+            const companyId = isSuper ? document.getElementById('prog-company-filter').value : '';
+            const teamId = filterSel.value;
+            const leaderId = leaderSel.value;
+            let filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
+            if (companyId) filtered = filtered.filter(m=>String(m.company_id)===String(companyId));
+            if (leaderId) {
+                const teamIds = leadersSeen.get(Number(leaderId)).teamIds;
+                filtered = filtered.filter(m=>teamIds.has(m.team_id));
+            }
+            currentFiltered = filtered;
+            const counts=this._countCourseStatuses(filtered);
+            document.getElementById('pg-matriculado').textContent=counts.matriculado;
+            document.getElementById('pg-andamento').textContent=counts.em_andamento;
+            document.getElementById('pg-finalizado').textContent=counts.finalizado;
+            this._renderStatusDonut('prog-donut', counts);
+            document.getElementById('prog-donut-legend').innerHTML=this._statusDonutLegendHtml(counts);
+            if(!filtered.length){
+                tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📊</div><p>Nenhuma pessoa encontrada.</p></div></td></tr>';
+                return;
+            }
+            filtered.forEach(u=>{
+                const pct=u.percent||0;
+                const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                tbody.innerHTML+=`<tr>
+                    <td><strong>${u.username}</strong></td>
+                    <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
+                    <td style="font-size:0.82rem">${u.team_name||'—'}</td>
+                    <td style="font-size:0.82rem">${u.role}</td>
+                    <td style="min-width:140px">
+                        <div style="display:flex;align-items:center;gap:0.5rem">
+                            <div class="progress-track" style="flex:1;height:6px"><div class="progress-fill" style="width:${pct}%;background:${barColor}"></div></div>
+                            <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
+                        </div>
+                    </td>
+                    <td>${this.actionBtn(`Cursos (${u.enrollments})`,`App._toggleProgressDetail('ap-row-${u.user_id}')`)}</td>
+                </tr>
+                <tr id="ap-row-${u.user_id}" class="hidden"><td colspan="6" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
+            });
+        };
+        renderRows();
+        filterSel.onchange = renderRows;
+        leaderSel.onchange = renderRows;
+        if (isSuper) document.getElementById('prog-company-filter').onchange = renderRows;
+    },
+
+    async renderAdminDashboard() {
+        this._resetContainerStyles();
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:'Dashboard'})+`
+            <div class="grid-stats" id="stats-grid">
+                <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="s-users">—</div><div class="stat-label">Usuários Ativos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="s-courses">—</div><div class="stat-label">Cursos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">🎬</div><div class="stat-info"><div class="stat-value" id="s-modules">—</div><div class="stat-label">Módulos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="s-completions">—</div><div class="stat-label">Cursos Finalizados</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="s-pending">—</div><div class="stat-label">Aprovações Pendentes</div></div></div>
+                <div class="stat-card"><div class="stat-icon">📬</div><div class="stat-info"><div class="stat-value" id="s-invites">—</div><div class="stat-label">Convites Pendentes</div></div></div>
+            </div>
+            <div class="card" style="margin-top:1.25rem">
+                <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Certificados emitidos por mês</h3>
+                <div style="position:relative;width:100%;height:200px"><canvas id="certs-monthly-chart"></canvas></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:1.25rem">
+                <div class="card">
+                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Últimos Usuários Cadastrados</h3>
+                    <div id="recent-users"><div class="loader">Carregando</div></div>
+                </div>
+                <div class="card">
+                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Convites Aguardando Ativação</h3>
+                    <div id="pending-invites"><div class="loader">Carregando</div></div>
+                </div>
+            </div>`;
+
+        // Buscar métricas reais do novo endpoint
+        try {
+            const [statsRes, usersRes, monthlyRes] = await Promise.all([
+                fetch('/dashboard/stats', {headers:this.apiHeaders()}),
+                fetch('/admin/users',     {headers:this.apiHeaders()}),
+                fetch('/dashboard/certificates-monthly', {headers:this.apiHeaders()})
+            ]);
+            const stats = await statsRes.json();
+            const users = await usersRes.json();
+            if(monthlyRes.ok && typeof Chart !== 'undefined'){
+                const monthly = await monthlyRes.json();
+                new Chart(document.getElementById('certs-monthly-chart'), {
+                    type: 'bar',
+                    data: { labels: monthly.labels, datasets: [{ label: 'Certificados emitidos', data: monthly.values, backgroundColor: '#3b82f6', borderRadius: 4 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+                });
+            }
+
+            document.getElementById('s-users').textContent      = stats.total_users      ?? '—';
+            document.getElementById('s-courses').textContent    = stats.total_courses    ?? '—';
+            document.getElementById('s-modules').textContent    = stats.total_modules    ?? '—';
+            document.getElementById('s-completions').textContent= stats.courses_completed ?? '0';
+            document.getElementById('s-pending').textContent    = stats.pending_users    ?? '0';
+            document.getElementById('s-invites').textContent    = stats.pending_invites  ?? '0';
+
+            // Últimos usuários
+            const recentEl=document.getElementById('recent-users');
+            const recent=[...users].reverse().slice(0,6);
+            recentEl.innerHTML=recent.length?recent.map(u=>`
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border)">
+                    <div>
+                        <div style="font-weight:600;font-size:0.88rem">${u.username}</div>
+                        <div style="font-size:0.75rem;color:var(--text-dim)">${u.email}</div>
+                    </div>
+                    ${this.statusBadge(u.status)}
+                </div>`).join(''):'<p style="color:var(--text-dim);font-size:0.88rem">Nenhum usuário.</p>';
+
+            // Convites pendentes
+            const invEl=document.getElementById('pending-invites');
+            const convites=users.filter(u=>u.status==='convite_pendente'||u.status==='invited');
+            invEl.innerHTML=convites.length?convites.slice(0,6).map(u=>`
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border)">
+                    <div style="min-width:0;flex:1">
+                        <div style="font-weight:600;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${u.username}</div>
+                        <div style="font-size:0.75rem;color:var(--text-dim)">${u.email}</div>
+                    </div>
+                    ${this.actionBtn('Reenviar',`App.adminAction(${u.id},'resend_invite')`)}
+                </div>`).join(''):'<p style="color:var(--text-dim);font-size:0.88rem">Nenhum convite pendente. ✓</p>';
+        } catch(e) {
+            console.error('Erro ao carregar dashboard:', e);
+        }
+    },
+
+    async renderLeaderDashboard() {
+        this._resetContainerStyles();
+        const container=document.getElementById('app-container');
+        const multiTeam = (this.user.led_team_ids||[]).length > 1;
+        container.innerHTML=this.sectionHeader({title:'Minha Equipe',actionLabel:'+ Convidar Colaborador',actionFn:'App.showInviteUserModal()'})+`
+            <div class="grid-stats" id="team-stats" style="margin-bottom:1.5rem">
+                <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="ts-members">—</div><div class="stat-label">Membros Ativos</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="ts-andamento">—</div><div class="stat-label">Cursos em Andamento</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-finalizado">—</div><div class="stat-label">Cursos Finalizados</div></div></div>
+            </div>
+            <div class="card" style="margin-bottom:1rem;display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
+                <div style="position:relative;width:120px;height:120px;flex-shrink:0"><canvas id="team-donut"></canvas></div>
+                <div id="team-donut-legend"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;gap:0.75rem;flex-wrap:wrap">
+                ${multiTeam?`<div style="display:flex;align-items:center;gap:0.5rem">
+                    <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
+                    <select id="team-filter" class="form-control" style="max-width:220px;width:auto">
+                        <option value="">Todas as minhas equipes</option>
+                    </select>
+                </div>`:'<span></span>'}
+                <button id="team-export-btn" style="padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬇ Exportar CSV</button>
+            </div>
+            <div class="card" style="overflow-x:auto;padding:0">
+                <table id="team-table">
+                    <thead><tr><th>Colaborador</th><th>E-mail</th>${multiTeam?'<th>Equipe</th>':''}<th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Cursos</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="${multiTeam?8:7}" class="loader">Carregando</td></tr></tbody>
+                </table>
+            </div>`;
+        try {
+            // Usa /team/progress que já filtra por TODAS as equipes que o líder lidera
+            const res=await fetch('/team/progress',{headers:this.apiHeaders()});
+            const allMembers=await res.json();
+            const colspan = multiTeam?8:7;
+            const tbody=document.querySelector('#team-table tbody');
+            if(!allMembers.length){
+                tbody.innerHTML=`<tr><td colspan="${colspan}"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>`;
+                ['ts-members','ts-andamento','ts-finalizado'].forEach(id=>document.getElementById(id).textContent='0');
+                return;
+            }
+            document.getElementById('team-export-btn').onclick=()=>this._exportProgressCsv(allMembers, 'minha_equipe.csv');
+
+            let teamFilter=null;
+            if(multiTeam){
+                teamFilter=document.getElementById('team-filter');
+                const teamsSeen=new Map();
+                allMembers.forEach(m=>{ if(m.team_id!=null) teamsSeen.set(m.team_id, m.team_name); });
+                [...teamsSeen.entries()].sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).forEach(([id,name])=>{
+                    teamFilter.innerHTML += `<option value="${id}">${name}</option>`;
+                });
+            }
+
+            const renderRows = () => {
+                const members = teamFilter && teamFilter.value ? allMembers.filter(m=>String(m.team_id)===String(teamFilter.value)) : allMembers;
+                const statusCounts=this._countCourseStatuses(members);
+                document.getElementById('ts-members').textContent=members.length;
+                document.getElementById('ts-andamento').textContent=statusCounts.em_andamento;
+                document.getElementById('ts-finalizado').textContent=statusCounts.finalizado;
+                this._renderStatusDonut('team-donut', statusCounts);
+                document.getElementById('team-donut-legend').innerHTML=this._statusDonutLegendHtml(statusCounts);
+                tbody.innerHTML='';
+                if(!members.length){
+                    tbody.innerHTML=`<tr><td colspan="${colspan}"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador nesta equipe.</p></div></td></tr>`;
+                    return;
+                }
+                members.forEach(u=>{
+                    const pct=u.percent||0;
+                    const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                    tbody.innerHTML+=`<tr>
+                        <td><strong>${u.username}</strong></td>
+                        <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
+                        ${multiTeam?`<td style="font-size:0.82rem">${u.team_name||'—'}</td>`:''}
+                        <td style="font-size:0.82rem">${u.role}</td>
+                        <td style="font-size:0.82rem">${u.modules_done}/${u.modules_total}</td>
+                        <td style="min-width:120px">
+                            <div style="display:flex;align-items:center;gap:0.5rem">
+                                <div class="progress-track" style="flex:1;height:6px">
+                                    <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
+                                </div>
+                                <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
+                            </div>
+                        </td>
+                        <td>${this.actionBtn(`Cursos (${u.enrollments})`,`App._toggleProgressDetail('lp-row-${u.user_id}')`)}</td>
+                        <td>${this.actionBtn('🎯 Atribuir Curso',`App.showAssignCourseModal(${u.user_id},'${u.username}')`)}</td>
+                    </tr>
+                    <tr id="lp-row-${u.user_id}" class="hidden"><td colspan="${colspan}" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
+                });
+            };
+            renderRows();
+            if(teamFilter) teamFilter.onchange = renderRows;
+        } catch(e) { console.error('Erro ao carregar equipe:', e); }
+    },
+
+    async renderStudentDashboard() {
+        this._resetContainerStyles();
+        const container=document.getElementById('app-container');
+        container.innerHTML=this.sectionHeader({title:`Olá, ${this.user.username}! 👋`})+`
+            <div class="grid-stats">
+                <div class="stat-card"><div class="stat-icon">📚</div><div class="stat-info"><div class="stat-value" id="sd-courses">—</div><div class="stat-label">Cursos Matriculados</div></div></div>
+                <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="sd-andamento">—</div><div class="stat-label">Em Andamento</div></div></div>
+                <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="sd-finalizado">—</div><div class="stat-label">Finalizados</div></div></div>
+                <div class="stat-card"><div class="stat-icon">🏆</div><div class="stat-info"><div class="stat-value" id="sd-certs">—</div><div class="stat-label">Certificados</div></div></div>
+            </div>
+            <h3 style="margin-bottom:1rem;color:var(--primary);font-size:1.1rem">Meus Cursos</h3>
+            <div class="grid" id="dash-courses"><div class="loader">Carregando</div></div>`;
+
+        const [coursesRes, certsRes] = await Promise.all([
+            fetch('/my-courses', {headers:this.apiHeaders()}),
+            fetch('/my-certificates', {headers:this.apiHeaders()})
+        ]);
+        const courses = coursesRes.ok ? await coursesRes.json() : [];
+        const certs = certsRes.ok ? await certsRes.json() : [];
+
+        document.getElementById('sd-courses').textContent=courses.length;
+        document.getElementById('sd-certs').textContent=certs.length;
+
+        let countAndamento=0, countFinalizado=0;
+        const grid=document.getElementById('dash-courses'); grid.innerHTML='';
+
+        if(!courses.length){
+            grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1">
+                <div class="empty-icon">📚</div>
+                <p>Você ainda não está matriculado em nenhum curso.</p>
+                <p style="font-size:0.85rem;margin-top:0.5rem">Entre em contato com seu líder ou administrador.</p>
+            </div>`;
+            document.getElementById('sd-andamento').textContent='0';
+            document.getElementById('sd-finalizado').textContent='0';
+            return;
+        }
+
+        // Busca o progresso de todos os cursos em paralelo em vez de um de cada vez.
+        const progDataList = await Promise.all(courses.map(async c => {
+            try{
+                const pRes=await fetch(`/courses/${c.id}/progress-summary`,{headers:this.apiHeaders()});
+                if(pRes.ok) return await pRes.json();
+            }catch(e){}
+            return {total:0,completed:0,percent:0};
+        }));
+        grid.innerHTML = courses.map((c,i) => {
+            const progData=progDataList[i];
+            const pct=progData.percent||0;
+            const courseStatus = progData.completed===0 ? 'matriculado' : (pct===100 ? 'finalizado' : 'em_andamento');
+            if(courseStatus==='em_andamento') countAndamento++;
+            else if(courseStatus==='finalizado') countFinalizado++;
+            const st=this._courseStatusBadge(courseStatus);
+            const fillColor=pct===100?'#22c55e':'var(--primary-light)';
+            return `<div class="path-card">
+                <div class="path-icon">📚</div>
+                <span style="align-self:flex-start;padding:2px 9px;border-radius:12px;font-size:0.7rem;font-weight:700;color:${st.color};background:${st.color}18;margin-bottom:0.4rem">${st.label}</span>
+                <h3 style="margin:0 0 0.4rem;font-size:1rem;color:var(--primary)">${c.title}</h3>
+                <p style="color:var(--text-dim);font-size:0.85rem;flex:1;margin:0 0 1rem;line-height:1.5">${c.description||''}</p>
+                <div style="margin-bottom:0.75rem">
+                    <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--text-dim);margin-bottom:0.3rem">
+                        <span>${progData.completed} de ${progData.total} módulos</span>
+                        <span style="font-weight:700;color:${fillColor}">${pct}%</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+                </div>
+                <button class="btn btn-primary" style="width:100%" onclick="App.showStudentModules(${c.id},'${c.title.replace(/'/g,"\\'")}')">
+                    ${pct===100?'✓ Concluído — Revisar':'Continuar →'}
+                </button>
+            </div>`;
+        }).join('');
+        document.getElementById('sd-andamento').textContent=countAndamento;
+        document.getElementById('sd-finalizado').textContent=countFinalizado;
+    },
+});
