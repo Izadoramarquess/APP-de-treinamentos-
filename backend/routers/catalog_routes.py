@@ -173,11 +173,14 @@ def create_module(
     if upload_id and filename:
         safe_name = sanitize_filename(filename, ALLOWED_VIDEO_EXT)
         temp_file_path = os.path.join(UPLOADS_DIR, "temp", f"{upload_id}_{safe_name}")
-        if os.path.exists(temp_file_path):
-            final_filename = f"{upload_id}_{safe_name}"
-            final_file_path = os.path.join(final_dir, final_filename)
-            shutil.move(temp_file_path, final_file_path)
-            video_url = f"/video/{final_filename}"
+        if not os.path.exists(temp_file_path):
+            # upload_id vencido/já consumido/nunca existiu — sem isso, o módulo
+            # era criado silenciosamente sem vídeo e sem erro nenhum pro chamador.
+            raise HTTPException(status_code=400, detail="Upload de vídeo não encontrado ou expirado. Tente subir o vídeo novamente.")
+        final_filename = f"{upload_id}_{safe_name}"
+        final_file_path = os.path.join(final_dir, final_filename)
+        shutil.move(temp_file_path, final_file_path)
+        video_url = f"/video/{final_filename}"
 
     thumbnail_path = None
     if thumbnail and thumbnail.filename:
@@ -245,11 +248,12 @@ def update_module(
     if upload_id and filename:
         safe_name = sanitize_filename(filename, ALLOWED_VIDEO_EXT)
         temp_file_path = os.path.join(UPLOADS_DIR, "temp", f"{upload_id}_{safe_name}")
-        if os.path.exists(temp_file_path):
-            final_filename = f"{upload_id}_{safe_name}"
-            final_file_path = os.path.join(UPLOADS_DIR, final_filename)
-            shutil.move(temp_file_path, final_file_path)
-            new_video_url = f"/video/{final_filename}"
+        if not os.path.exists(temp_file_path):
+            raise HTTPException(status_code=400, detail="Upload de vídeo não encontrado ou expirado. Tente subir o vídeo novamente.")
+        final_filename = f"{upload_id}_{safe_name}"
+        final_file_path = os.path.join(UPLOADS_DIR, final_filename)
+        shutil.move(temp_file_path, final_file_path)
+        new_video_url = f"/video/{final_filename}"
 
     if new_video_url:
         module.video_url = new_video_url
@@ -282,6 +286,20 @@ def delete_module(module_id: int, db: Session = Depends(get_db), current_user: m
     db.query(models.Material).filter(models.Material.module_id == module.id).delete()
     db.query(models.ModuleProgress).filter(models.ModuleProgress.module_id == module.id).delete()
 
+    video_url, thumbnail_url = module.video_url, module.thumbnail_url
     db.delete(module)
     db.commit()
+
+    # Só apaga do disco depois do commit confirmar a exclusão do módulo —
+    # sem isso, todo módulo/curso excluído deixava o vídeo (e a thumbnail)
+    # órfão em uploads/ pra sempre.
+    for url in (video_url, thumbnail_url):
+        if not url:
+            continue
+        path = os.path.join(UPLOADS_DIR, os.path.basename(url))
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     return {"message": "Módulo excluído com sucesso"}

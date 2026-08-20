@@ -26,20 +26,27 @@ def dashboard_stats(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
 ):
-    company_filter = current_user.role == "admin"
     users_q    = db.query(models.User).filter(models.User.status == "ativo")
     pending_q  = db.query(models.User).filter(models.User.status == "pending")
     courses_q  = db.query(models.Course)
     modules_q  = db.query(models.Module).join(models.Course)
     certs_q    = db.query(models.Certificate).join(models.Course)
     invites_q  = db.query(models.User).filter(models.User.status == "convite_pendente")
-    if company_filter:
+    if current_user.role == "admin":
         users_q   = users_q.filter(models.User.company_id == current_user.company_id)
         pending_q = pending_q.filter(models.User.company_id == current_user.company_id)
+        invites_q = invites_q.filter(models.User.company_id == current_user.company_id)
+    elif current_user.role == "lideranca":
+        # Mesmo recorte de list_users: liderança só vê a própria equipe.
+        users_q   = users_q.filter(models.User.team_id == current_user.team_id)
+        pending_q = pending_q.filter(models.User.team_id == current_user.team_id)
+        invites_q = invites_q.filter(models.User.team_id == current_user.team_id)
+    if current_user.role != "super_admin":
+        # Cursos/módulos/certificados nunca são vistos fora da própria empresa,
+        # nem por admin nem por liderança (não são recortados por equipe).
         courses_q = courses_q.filter(models.Course.company_id == current_user.company_id)
         modules_q = modules_q.filter(models.Course.company_id == current_user.company_id)
         certs_q   = certs_q.filter(models.Course.company_id == current_user.company_id)
-        invites_q = invites_q.filter(models.User.company_id == current_user.company_id)
     return {
         "total_users": users_q.count(),
         "pending_users": pending_q.count(),
@@ -295,9 +302,11 @@ def enroll_user(
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course: raise HTTPException(status_code=404, detail="Curso não encontrado")
 
-    # Validação de equipe para líderes
-    if current_user.role == "lideranca" and target_user.team_id != current_user.team_id:
-        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos a membros da sua equipe.")
+    # Validação de equipe e empresa para líderes — curso também precisa ser
+    # da mesma empresa do líder, senão dava pra matricular em curso alheio
+    # informando o course_id de outra empresa direto na API.
+    if current_user.role == "lideranca" and (target_user.team_id != current_user.team_id or course.company_id != current_user.company_id):
+        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos da sua empresa a membros da sua equipe.")
     # Validação de empresa para admin — nem usuário nem curso podem ser de outra empresa.
     if current_user.role == "admin" and (target_user.company_id != current_user.company_id or course.company_id != current_user.company_id):
         raise HTTPException(status_code=403, detail="Você só pode atribuir cursos da sua empresa a usuários da sua empresa.")

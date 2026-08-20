@@ -144,7 +144,10 @@ def register_user(db: Session, user: UserCreate):
                 existing_user.username = user.username
                 existing_user.hashed_password = get_password_hash(user.password)
                 existing_user.department = user.department
-                existing_user.company_id = user.company_id
+                # company_id NÃO é sobrescrito aqui: já foi fixado por quem
+                # convidou (junto com o team_id, que pertence a essa mesma
+                # empresa) — aceitar o valor do payload deixaria a pessoa
+                # com company_id de uma empresa e team_id de outra.
                 existing_user.status = "ativo"
                 existing_user.invite_token = None  # invalida o token após uso
                 db.commit()

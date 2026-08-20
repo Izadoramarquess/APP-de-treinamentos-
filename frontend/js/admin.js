@@ -202,7 +202,7 @@ Object.assign(App, {
             e.preventDefault();
             const fd=new FormData();
             fd.append('role',document.getElementById('e-role').value);
-            fd.append('team_id',document.getElementById('e-team').value);
+            const tid=document.getElementById('e-team').value; if(tid) fd.append('team_id',tid);
             const companyEl=document.getElementById('e-company'); if(companyEl) fd.append('company_id',companyEl.value);
             const res=await fetch(`/admin/users/${id}/role`,{method:'POST',headers:this.apiHeaders(),body:fd});
             if(!res.ok){alert((await res.json()).detail);return;}

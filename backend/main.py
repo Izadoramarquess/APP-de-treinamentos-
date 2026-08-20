@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 import database
 import reminder_jobs
-from deps import UPLOADS_DIR
+from deps import UPLOADS_DIR, cleanup_orphaned_temp_uploads
 from auth_reset import reset_router
 from routers import auth_routes, admin_routes, catalog_routes, quiz_routes, student_routes
 
@@ -20,6 +20,7 @@ async def lifespan(app):
     """Inicializa o banco de dados e o agendador de lembretes por e-mail
     (certificado vencendo, curso parado) ao subir o servidor."""
     database.init_db()
+    cleanup_orphaned_temp_uploads()
     reminder_jobs.start_scheduler()
     yield
     reminder_jobs.stop_scheduler()

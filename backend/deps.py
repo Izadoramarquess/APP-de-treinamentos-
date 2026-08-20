@@ -89,6 +89,23 @@ UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(os.path.join(UPLOADS_DIR, "temp"), exist_ok=True)
 
+def cleanup_orphaned_temp_uploads(max_age_hours: int = 24):
+    """Apaga arquivos de upload em pedaços abandonados em uploads/temp/ —
+    todo upload que começou (init) mas nunca terminou (browser fechado,
+    rede caiu, chunk falhou sem retry) fica lá pra sempre, já que nada mais
+    no código limpa esse diretório. Roda no boot do servidor."""
+    temp_dir = os.path.join(UPLOADS_DIR, "temp")
+    if not os.path.isdir(temp_dir):
+        return
+    cutoff = datetime.datetime.now().timestamp() - max_age_hours * 3600
+    for name in os.listdir(temp_dir):
+        path = os.path.join(temp_dir, name)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
 # Department é obrigatório em User; usado quando um fluxo de criação
 # (convite do admin, adição pela liderança) não coleta esse dado.
 DEFAULT_DEPARTMENT = "Não informado"
