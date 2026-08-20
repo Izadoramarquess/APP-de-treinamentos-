@@ -84,6 +84,26 @@ def check_same_company(current_user: models.User, entity_company_id: int, what: 
     if current_user.role != "super_admin" and entity_company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail=f"Este {what} não pertence à sua empresa.")
 
+# ---------------- Liderança de equipe (um líder pode liderar várias) ----------------
+def get_led_team_ids(db: Session, user_id: int) -> List[int]:
+    """Equipes que esse usuário lidera — ponto único usado em todo lugar
+    que hoje seria 'current_user.team_id == X' pra um líder; substituído
+    por 'X in get_led_team_ids(...)' porque um líder pode liderar mais de
+    uma equipe (equipe-base/team_id continua sendo só uma, só a pessoa a
+    quem ela pertence — liderança é à parte, ver models.TeamLeader)."""
+    return [tl.team_id for tl in db.query(models.TeamLeader).filter(models.TeamLeader.user_id == user_id).all()]
+
+def ensure_leader_has_team(db: Session, user: models.User):
+    """Evita 'líder órfão' (role=lideranca sem nenhuma equipe liderada) —
+    chamado depois de qualquer caminho que promove alguém a lideranca sem
+    passar explicitamente a lista de equipes lideradas."""
+    if user.role != "lideranca":
+        return
+    has_any = db.query(models.TeamLeader).filter(models.TeamLeader.user_id == user.id).first()
+    if not has_any:
+        db.add(models.TeamLeader(user_id=user.id, team_id=user.team_id))
+        db.commit()
+
 # ---------------- Constantes de domínio ----------------
 UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads"))
 os.makedirs(UPLOADS_DIR, exist_ok=True)

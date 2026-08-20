@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate, require_enrolled, require_enrolled_in_module
+from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate, require_enrolled, require_enrolled_in_module, get_led_team_ids
 from certificate_pdf import generate_certificate_pdf
 
 router = APIRouter()
@@ -113,7 +113,7 @@ def get_team_progress(
         ).all()
     else:
         members = db.query(models.User).filter(
-            models.User.team_id == current_user.team_id,
+            models.User.team_id.in_(get_led_team_ids(db, current_user.id)),
             models.User.status == "ativo"
         ).all()
 
@@ -237,7 +237,7 @@ def download_certificate(
     is_owner = current_user.id == cert.user_id
     is_super_admin = current_user.role == "super_admin"
     is_admin = current_user.role == "admin" and owner and owner.company_id == current_user.company_id
-    is_leader_of_owner = current_user.role == "lideranca" and owner and owner.team_id == current_user.team_id
+    is_leader_of_owner = current_user.role == "lideranca" and owner and owner.team_id in get_led_team_ids(db, current_user.id)
     if not (is_owner or is_super_admin or is_admin or is_leader_of_owner):
         raise HTTPException(403, "Sem permissão para baixar este certificado")
 

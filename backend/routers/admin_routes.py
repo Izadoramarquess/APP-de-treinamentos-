@@ -15,7 +15,7 @@ import email_utils
 from auth import get_password_hash
 from deps import (
     get_db, authorize, iso_utc, DEFAULT_DEPARTMENT, check_upload_size, resolve_company_id, check_same_company,
-    ALLOWED_IMAGE_EXT, safe_filename, UPLOADS_DIR,
+    ALLOWED_IMAGE_EXT, safe_filename, UPLOADS_DIR, get_led_team_ids, ensure_leader_has_team,
 )
 
 router = APIRouter()
@@ -37,10 +37,11 @@ def dashboard_stats(
         pending_q = pending_q.filter(models.User.company_id == current_user.company_id)
         invites_q = invites_q.filter(models.User.company_id == current_user.company_id)
     elif current_user.role == "lideranca":
-        # Mesmo recorte de list_users: liderança só vê a própria equipe.
-        users_q   = users_q.filter(models.User.team_id == current_user.team_id)
-        pending_q = pending_q.filter(models.User.team_id == current_user.team_id)
-        invites_q = invites_q.filter(models.User.team_id == current_user.team_id)
+        # Mesmo recorte de list_users: liderança só vê as equipes que lidera.
+        led_ids = get_led_team_ids(db, current_user.id)
+        users_q   = users_q.filter(models.User.team_id.in_(led_ids))
+        pending_q = pending_q.filter(models.User.team_id.in_(led_ids))
+        invites_q = invites_q.filter(models.User.team_id.in_(led_ids))
     if current_user.role != "super_admin":
         # Cursos/módulos/certificados nunca são vistos fora da própria empresa,
         # nem por admin nem por liderança (não são recortados por equipe).
@@ -58,16 +59,70 @@ def dashboard_stats(
         "pending_invites": invites_q.count()
     }
 
+@router.get("/dashboard/certificates-monthly")
+def certificates_monthly(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(authorize(["admin", "lideranca"]))
+):
+    """Certificados emitidos nos últimos 6 meses, um balde por mês — sempre
+    os 6 meses, com 0 explícito onde não teve nenhum (série de tamanho
+    fixo pro gráfico, não esparsa). Agrupa em Python em vez de usar função
+    de data do banco pra não depender de SQLite vs Postgres se comportarem
+    igual (já tivemos diferença entre os dois nesta mesma base de código)."""
+    today = datetime.date.today()
+    months = []
+    y, m = today.year, today.month
+    for _ in range(6):
+        months.append((y, m))
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    months.reverse()
+    range_start = datetime.datetime(months[0][0], months[0][1], 1)
+
+    certs_q = db.query(models.Certificate).join(models.Course).filter(models.Certificate.issued_at >= range_start)
+    if current_user.role == "lideranca":
+        led_ids = get_led_team_ids(db, current_user.id)
+        certs_q = certs_q.join(models.User, models.User.id == models.Certificate.user_id).filter(models.User.team_id.in_(led_ids))
+    elif current_user.role != "super_admin":
+        certs_q = certs_q.filter(models.Course.company_id == current_user.company_id)
+
+    counts = {ym: 0 for ym in months}
+    for cert in certs_q.all():
+        key = (cert.issued_at.year, cert.issued_at.month)
+        if key in counts:
+            counts[key] += 1
+
+    meses_pt = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    return {
+        "labels": [f"{meses_pt[m]}/{str(y)[2:]}" for (y, m) in months],
+        "values": [counts[ym] for ym in months]
+    }
+
 # ---------------- Admin: User Management ----------------
+def _attach_led_team_ids(db: Session, users: List[models.User]) -> List[models.User]:
+    """Anexa led_team_ids (não é coluna, é lido à parte) em cada User antes
+    de servir como UserSchema — só busca no banco se algum for líder."""
+    leader_ids = [u.id for u in users if u.role == "lideranca"]
+    leader_map = {}
+    if leader_ids:
+        for tl in db.query(models.TeamLeader).filter(models.TeamLeader.user_id.in_(leader_ids)).all():
+            leader_map.setdefault(tl.user_id, []).append(tl.team_id)
+    for u in users:
+        u.led_team_ids = leader_map.get(u.id, [])
+    return users
+
 @router.get("/admin/users", response_model=List[models.UserSchema])
 def list_users(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
     if current_user.role == "super_admin":
-        return db.query(models.User).all()
-    if current_user.role == "admin":
+        users = db.query(models.User).all()
+    elif current_user.role == "admin":
         # Garante que o endpoint retorne TODOS os usuários da empresa, incluindo os com status 'pending'
-        return db.query(models.User).filter(models.User.company_id == current_user.company_id).all()
-    # Liderança só vê membros da própria equipe
-    return db.query(models.User).filter(models.User.team_id == current_user.team_id).all()
+        users = db.query(models.User).filter(models.User.company_id == current_user.company_id).all()
+    else:
+        # Liderança vê membros de toda equipe que lidera
+        users = db.query(models.User).filter(models.User.team_id.in_(get_led_team_ids(db, current_user.id))).all()
+    return _attach_led_team_ids(db, users)
 
 @router.post("/admin/users/{user_id}/status")
 def update_user_status(user_id: int, new_status: str = Form(None), role: str = Form(None), team_id: int = Form(None), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
@@ -89,6 +144,10 @@ def update_user_status(user_id: int, new_status: str = Form(None), role: str = F
         else:
             user.team_id = auth.get_default_team(db, user.company_id).id
     db.commit()
+    # Esse endpoint também pode promover a lideranca (via o campo role acima)
+    # sem passar pela tela dedicada de "equipes lideradas" — sem isso, virava
+    # um segundo jeito de criar um líder sem nenhuma equipe atribuída.
+    ensure_leader_has_team(db, user)
     return {"message": "User updated"}
 
 @router.post("/admin/users/{user_id}/role")
@@ -97,6 +156,7 @@ def update_user_role(
     role: str = Form(...),
     team_id: Optional[int] = Form(None),
     company_id: Optional[int] = Form(None),
+    led_team_ids: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
@@ -127,7 +187,25 @@ def update_user_role(
         user.team_id = team.id
     else:
         user.team_id = auth.get_default_team(db, user.company_id).id
+
+    # Equipes lideradas — separado da equipe-base (team_id) acima, porque
+    # um líder pode liderar mais de uma. Só mexe nisso se o papel final for
+    # lideranca; virou outro papel, perde toda liderança (simétrico ao que
+    # remove_team já faz ao tirar alguém da equipe).
+    if role == "lideranca":
+        if led_team_ids is not None:
+            ids = [int(x) for x in led_team_ids.split(",") if x.strip()]
+            valid_teams = db.query(models.Team).filter(models.Team.id.in_(ids), models.Team.company_id == user.company_id).all()
+            if len(valid_teams) != len(ids):
+                raise HTTPException(status_code=400, detail="Uma ou mais equipes não pertencem à empresa do usuário.")
+            db.query(models.TeamLeader).filter(models.TeamLeader.user_id == user.id).delete()
+            for tid in ids:
+                db.add(models.TeamLeader(user_id=user.id, team_id=tid))
+    else:
+        db.query(models.TeamLeader).filter(models.TeamLeader.user_id == user.id).delete()
+
     db.commit()
+    ensure_leader_has_team(db, user)
     return {"message": "Role atualizado com sucesso"}
 
 @router.post("/admin/users/{user_id}/reset-password")
@@ -175,6 +253,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     db.query(models.ModuleProgress).filter(models.ModuleProgress.user_id == user.id).delete()
     db.query(models.Certificate).filter(models.Certificate.user_id == user.id).delete()
     db.query(models.QuestionAttempt).filter(models.QuestionAttempt.user_id == user.id).delete()
+    db.query(models.TeamLeader).filter(models.TeamLeader.user_id == user.id).delete()
 
     # Unlink invited_by gracefully
     db.query(models.User).filter(models.User.invited_by_id == user.id).update({"invited_by_id": None})
@@ -239,7 +318,14 @@ def invite_user_admin(
     current_user: models.User = Depends(authorize(["admin", "lideranca"]))
 ):
     if current_user.role == "lideranca":
-        team_id = current_user.team_id
+        led_ids = get_led_team_ids(db, current_user.id)
+        if team_id is not None and team_id not in led_ids:
+            raise HTTPException(status_code=403, detail="Você só pode convidar para uma equipe que você lidera.")
+        if team_id is None:
+            if len(led_ids) == 1:
+                team_id = led_ids[0]
+            else:
+                raise HTTPException(status_code=400, detail="Você lidera mais de uma equipe — informe para qual delas é o convite.")
         role = "usuario"
     resolved_company_id = resolve_company_id(current_user, company_id)
     try:
@@ -306,7 +392,7 @@ def enroll_user(
     # Validação de equipe e empresa para líderes — curso também precisa ser
     # da mesma empresa do líder, senão dava pra matricular em curso alheio
     # informando o course_id de outra empresa direto na API.
-    if current_user.role == "lideranca" and (target_user.team_id != current_user.team_id or course.company_id != current_user.company_id):
+    if current_user.role == "lideranca" and (target_user.team_id not in get_led_team_ids(db, current_user.id) or course.company_id != current_user.company_id):
         raise HTTPException(status_code=403, detail="Você só pode atribuir cursos da sua empresa a membros da sua equipe.")
     # Validação de empresa para admin — nem usuário nem curso podem ser de outra empresa.
     if current_user.role == "admin" and (target_user.company_id != current_user.company_id or course.company_id != current_user.company_id):
@@ -324,7 +410,7 @@ def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: mod
     if not user: raise HTTPException(status_code=404)
 
     # Validação para liderança
-    if current_user.role == "lideranca" and user.team_id != current_user.team_id:
+    if current_user.role == "lideranca" and user.team_id not in get_led_team_ids(db, current_user.id):
         raise HTTPException(status_code=403, detail="Você só pode reenviar convites para membros da sua própria equipe.")
     check_same_company(current_user, user.company_id, "usuário")
 
@@ -373,7 +459,9 @@ def remove_team(user_id: int, db: Session = Depends(get_db), current_user: model
     if not user: raise HTTPException(status_code=404)
     check_same_company(current_user, user.company_id, "usuário")
     user.team_id = auth.get_default_team(db, user.company_id).id  # Time é obrigatório: volta para o time padrão em vez de nulo.
-    if user.role == "lideranca": user.role = "usuario"
+    if user.role == "lideranca":
+        user.role = "usuario"
+        db.query(models.TeamLeader).filter(models.TeamLeader.user_id == user.id).delete()
     db.commit()
     return {"message": "Removido"}
 
@@ -384,7 +472,7 @@ def list_invites(db: Session = Depends(get_db), current_user: models.User = Depe
         query = query.filter(models.User.company_id == current_user.company_id)
     elif current_user.role != "super_admin":
         # Liderança só vê convites/usuários da própria equipe (mesmo filtro de list_users).
-        query = query.filter(models.User.team_id == current_user.team_id)
+        query = query.filter(models.User.team_id.in_(get_led_team_ids(db, current_user.id)))
     users = query.all()
     out = []
     for u in users:
@@ -404,22 +492,43 @@ def list_invites(db: Session = Depends(get_db), current_user: models.User = Depe
         })
     return out
 
+def _attach_team_leaders(db: Session, teams: List[models.Team]) -> List[models.Team]:
+    """Anexa leaders (não é coluna, é lido à parte) em cada Team antes de
+    servir como TeamSchema."""
+    if not teams:
+        return teams
+    rows = db.query(models.TeamLeader, models.User).join(
+        models.User, models.User.id == models.TeamLeader.user_id
+    ).filter(models.TeamLeader.team_id.in_([t.id for t in teams])).all()
+    leaders_map = {}
+    for tl, u in rows:
+        leaders_map.setdefault(tl.team_id, []).append(u)
+    for t in teams:
+        t.leaders = leaders_map.get(t.id, [])
+    return teams
+
 # ---------------- Teams ----------------
 @router.get("/teams", response_model=List[models.TeamSchema])
 def list_teams(db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin", "lideranca"]))):
     if current_user.role == "super_admin":
-        return db.query(models.Team).all()
-    # admin e liderança só veem as equipes da própria empresa — antes deste
-    # endpoint não filtrava nada, nem por empresa nem por qualquer outro critério.
-    return db.query(models.Team).filter(models.Team.company_id == current_user.company_id).all()
+        teams = db.query(models.Team).all()
+    else:
+        # admin e liderança só veem as equipes da própria empresa — antes deste
+        # endpoint não filtrava nada, nem por empresa nem por qualquer outro critério.
+        # (liderança continua vendo TODAS as equipes da empresa, não só as que
+        # lidera — usado pra escolher em qual das próprias equipes matricular
+        # alguém e pro filtro "Líder" do admin; não é sobra, é dependência.)
+        teams = db.query(models.Team).filter(models.Team.company_id == current_user.company_id).all()
+    return _attach_team_leaders(db, teams)
 
-@router.post("/teams", response_model=models.TeamSchema)
+@router.post("/teams")
 def create_team(
     name: str = Form(...),
     description: str = Form(""),
     emails: str = Form(""),
     team_admin_email: str = Form(...),
     company_id: Optional[int] = Form(None),
+    move_home_team: bool = Form(False),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
@@ -448,6 +557,7 @@ def create_team(
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
 
     team_members_ids = []
+    result_state = {"home_team_changed": False}
 
     def dispatch_team_member(email_addr, is_admin):
         if not auth.is_allowed_email_domain(email_addr):
@@ -461,9 +571,25 @@ def create_team(
             # isso mudaria a empresa dela sem ninguém ter pedido isso de propósito.
             if user.company_id != resolved_company_id:
                 raise HTTPException(status_code=400, detail=f"{email_addr} já pertence a outra empresa.")
-            user.team_id = team.id
-            if is_admin: user.role = "lideranca"
-            team_members_ids.append(user.id)
+            if is_admin:
+                user.role = "lideranca"
+                # Só move a equipe-base (team_id) se a pessoa ainda não tinha
+                # nenhuma de verdade (estava na "Sem Equipe" padrão) — senão,
+                # liderar essa equipe nova não deve tirar a pessoa da equipe
+                # que já era dela. move_home_team força a troca mesmo assim.
+                default_team = auth.get_default_team(db, resolved_company_id)
+                if user.team_id == default_team.id or move_home_team:
+                    user.team_id = team.id
+                    result_state["home_team_changed"] = True
+                    team_members_ids.append(user.id)
+                already_leader = db.query(models.TeamLeader).filter(
+                    models.TeamLeader.user_id == user.id, models.TeamLeader.team_id == team.id
+                ).first()
+                if not already_leader:
+                    db.add(models.TeamLeader(user_id=user.id, team_id=team.id))
+            else:
+                user.team_id = team.id
+                team_members_ids.append(user.id)
             db.commit()  # persiste o novo team_id antes do e-mail sair (send_email também comita, mas é bom deixar explícito aqui)
             email_utils.send_email(
                 db, user.email, f"Você foi adicionado à equipe {team.name} — GeoTrilha",
@@ -489,6 +615,9 @@ def create_team(
             db.add(new_user)
             db.flush()
             team_members_ids.append(new_user.id)
+            result_state["home_team_changed"] = True
+            if is_admin:
+                db.add(models.TeamLeader(user_id=new_user.id, team_id=team.id))
             invite_link = f"{base_url}/?view=convite&token={invite_t}"
             email_utils.send_email(
                 db, email_addr, f"Convite — Equipe {team.name} na GeoTrilha",
@@ -514,8 +643,9 @@ def create_team(
 
     db.commit()
     db.refresh(team)
+    _attach_team_leaders(db, [team])
 
-    return team
+    return {**models.TeamSchema.model_validate(team).model_dump(), "home_team_changed": result_state["home_team_changed"]}
 
 # ---------------- Empresas (super_admin) ----------------
 @router.get("/companies", response_model=List[models.CompanySchema])

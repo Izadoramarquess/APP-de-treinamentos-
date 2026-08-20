@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, Float, DateTime
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, Float, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 import datetime
 from database import Base
@@ -27,6 +27,16 @@ class Team(Base):
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
 
     members = relationship("User", back_populates="team")
+
+class TeamLeader(Base):
+    """Quem lidera qual equipe — separado de User.team_id (que é só a
+    equipe-base/pertencimento da pessoa) porque um líder pode liderar mais
+    de uma equipe ao mesmo tempo, mas só pertence (team_id) a uma."""
+    __tablename__ = "team_leaders"
+    id = Column(Integer, primary_key=True, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    __table_args__ = (UniqueConstraint('team_id', 'user_id'),)
 
 class User(Base):
     __tablename__ = "users"
@@ -262,6 +272,9 @@ class UserSchema(BaseModel):
     invite_expires_at: Optional[datetime.datetime] = None
     invited_by_id: Optional[int] = None
     must_change_password: bool = False
+    # Equipes que essa pessoa lidera (só relevante se role=="lideranca") —
+    # preenchido à parte, não é uma coluna real (ver deps.get_led_team_ids).
+    led_team_ids: List[int] = []
     class Config: from_attributes = True
 
 class CompanySchema(BaseModel):
@@ -289,10 +302,22 @@ class EnrollmentSchema(BaseModel):
     enrolled_at: datetime.datetime
     class Config: from_attributes = True
 
+class TeamLeaderInfo(BaseModel):
+    id: int
+    username: str
+    class Config: from_attributes = True
+
 class TeamSchema(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-    company_id: int
+    # Na prática quase sempre int (equipe pertence a uma empresa) — mas o
+    # super_admin (sem empresa própria) também precisa de um team_id não
+    # nulo em User, e a "Sem Equipe" placeholder dele fica sem company_id.
+    company_id: Optional[int] = None
     members: List[UserSchema] = []
+    # Quem lidera essa equipe — não é o mesmo que "membro com role
+    # lideranca" (um líder pode liderar uma equipe da qual não é
+    # membro-base). Ver deps.get_led_team_ids / TeamLeader.
+    leaders: List[TeamLeaderInfo] = []
     class Config: from_attributes = True

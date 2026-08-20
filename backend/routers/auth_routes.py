@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 import models
 import auth
 from auth import get_password_hash
-from deps import get_db, get_current_user, authorize
+from deps import get_db, get_current_user, authorize, get_led_team_ids
 
 router = APIRouter()
 
@@ -20,7 +20,8 @@ def login(form_data: auth.LoginRequest, db: Session = Depends(get_db)):
     return auth.login_for_access_token(db, form_data)
 
 @router.get("/users/me", response_model=models.UserSchema)
-def read_users_me(current_user: models.User = Depends(get_current_user)):
+def read_users_me(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    current_user.led_team_ids = get_led_team_ids(db, current_user.id)
     return current_user
 
 @router.post("/auth/change-password")

@@ -76,6 +76,32 @@ Object.assign(App, {
         if(row) row.classList.toggle('hidden');
     },
 
+    // Donut reaproveitado em Progresso (admin) e Minha Equipe (líder) — os
+    // dois têm o mesmo formato de dado (contagem matriculado/andamento/
+    // finalizado) e o mesmo objetivo (visão rápida da distribuição atual).
+    _renderStatusDonut(canvasId, counts) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || typeof Chart === 'undefined') return;
+        const data = [counts.matriculado, counts.em_andamento, counts.finalizado];
+        if (canvas._chart) { canvas._chart.data.datasets[0].data = data; canvas._chart.update(); return; }
+        canvas._chart = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels: ['Matriculados', 'Em andamento', 'Finalizados'],
+                datasets: [{ data, backgroundColor: ['#f59e0b', '#3b82f6', '#22c55e'], borderWidth: 0 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } }
+        });
+    },
+
+    _statusDonutLegendHtml(counts) {
+        return `<div style="display:flex;flex-direction:column;gap:8px;font-size:0.82rem">
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#f59e0b"></span>Matriculados · ${counts.matriculado}</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6"></span>Em andamento · ${counts.em_andamento}</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#22c55e"></span>Finalizados · ${counts.finalizado}</span>
+        </div>`;
+    },
+
     async renderAdminProgress() {
         this._resetContainerStyles();
         const isSuper = this.user.role === 'super_admin';
@@ -91,11 +117,19 @@ Object.assign(App, {
                 <select id="prog-company-filter" class="form-control" style="max-width:220px;width:auto">
                     <option value="">Todas as empresas</option>
                 </select>`:''}
+                <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Líder:</label>
+                <select id="prog-leader-filter" class="form-control" style="max-width:220px;width:auto">
+                    <option value="">Todos os líderes</option>
+                </select>
                 <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
                 <select id="prog-team-filter" class="form-control" style="max-width:260px;width:auto">
                     <option value="">Todas as equipes</option>
                 </select>
                 <button id="prog-export-btn" style="margin-left:auto;padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬇ Exportar CSV</button>
+            </div>
+            <div class="card" style="margin-bottom:1rem;display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
+                <div style="position:relative;width:140px;height:140px;flex-shrink:0"><canvas id="prog-donut"></canvas></div>
+                <div id="prog-donut-legend"></div>
             </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="progress-table">
@@ -104,11 +138,13 @@ Object.assign(App, {
                 </table>
             </div>`;
 
-        const [progRes, companies] = await Promise.all([
+        const [progRes, teamsRes, companies] = await Promise.all([
             fetch('/team/progress', {headers:this.apiHeaders()}).catch(()=>null),
+            fetch('/teams', {headers:this.apiHeaders()}).catch(()=>null),
             isSuper ? this._fetchCompanies() : Promise.resolve([])
         ]);
         const allMembers = (progRes && progRes.ok) ? await progRes.json() : [];
+        const teams = (teamsRes && teamsRes.ok) ? await teamsRes.json() : [];
         const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
 
         if (isSuper) {
@@ -127,19 +163,41 @@ Object.assign(App, {
             filterSel.innerHTML += `<option value="${id}">${name}</option>`;
         });
 
+        // Líder é uma pessoa, não uma equipe — um líder pode liderar mais de
+        // uma equipe, então o filtro guarda o CONJUNTO de equipes que cada
+        // líder lidera (vem de team.leaders, já que /team/progress só traz
+        // a equipe-base de cada linha, não quem lidera o quê).
+        const leaderSel = document.getElementById('prog-leader-filter');
+        const leadersSeen = new Map();
+        teams.forEach(t=>(t.leaders||[]).forEach(l=>{
+            if(!leadersSeen.has(l.id)) leadersSeen.set(l.id, {username:l.username, teamIds:new Set()});
+            leadersSeen.get(l.id).teamIds.add(t.id);
+        }));
+        [...leadersSeen.entries()].sort((a,b)=>a[1].username.localeCompare(b[1].username)).forEach(([id,info])=>{
+            leaderSel.innerHTML += `<option value="${id}">${info.username}</option>`;
+        });
+
         let currentFiltered = allMembers;
         document.getElementById('prog-export-btn').onclick = () => this._exportProgressCsv(currentFiltered, 'progresso.csv');
 
-        const renderRows = (teamId) => {
+        const renderRows = () => {
             const tbody=document.querySelector('#progress-table tbody'); tbody.innerHTML='';
             const companyId = isSuper ? document.getElementById('prog-company-filter').value : '';
+            const teamId = filterSel.value;
+            const leaderId = leaderSel.value;
             let filtered = teamId ? allMembers.filter(m=>String(m.team_id)===String(teamId)) : allMembers;
             if (companyId) filtered = filtered.filter(m=>String(m.company_id)===String(companyId));
+            if (leaderId) {
+                const teamIds = leadersSeen.get(Number(leaderId)).teamIds;
+                filtered = filtered.filter(m=>teamIds.has(m.team_id));
+            }
             currentFiltered = filtered;
             const counts=this._countCourseStatuses(filtered);
             document.getElementById('pg-matriculado').textContent=counts.matriculado;
             document.getElementById('pg-andamento').textContent=counts.em_andamento;
             document.getElementById('pg-finalizado').textContent=counts.finalizado;
+            this._renderStatusDonut('prog-donut', counts);
+            document.getElementById('prog-donut-legend').innerHTML=this._statusDonutLegendHtml(counts);
             if(!filtered.length){
                 tbody.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📊</div><p>Nenhuma pessoa encontrada.</p></div></td></tr>';
                 return;
@@ -163,9 +221,10 @@ Object.assign(App, {
                 <tr id="ap-row-${u.user_id}" class="hidden"><td colspan="6" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
             });
         };
-        renderRows('');
-        filterSel.onchange = () => renderRows(filterSel.value);
-        if (isSuper) document.getElementById('prog-company-filter').onchange = () => renderRows(filterSel.value);
+        renderRows();
+        filterSel.onchange = renderRows;
+        leaderSel.onchange = renderRows;
+        if (isSuper) document.getElementById('prog-company-filter').onchange = renderRows;
     },
 
     async renderAdminDashboard() {
@@ -180,7 +239,11 @@ Object.assign(App, {
                 <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="s-pending">—</div><div class="stat-label">Aprovações Pendentes</div></div></div>
                 <div class="stat-card"><div class="stat-icon">📬</div><div class="stat-info"><div class="stat-value" id="s-invites">—</div><div class="stat-label">Convites Pendentes</div></div></div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:0.5rem">
+            <div class="card" style="margin-top:1.25rem">
+                <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Certificados emitidos por mês</h3>
+                <div style="position:relative;width:100%;height:200px"><canvas id="certs-monthly-chart"></canvas></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:1.25rem">
                 <div class="card">
                     <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--primary)">Últimos Usuários Cadastrados</h3>
                     <div id="recent-users"><div class="loader">Carregando</div></div>
@@ -193,12 +256,21 @@ Object.assign(App, {
 
         // Buscar métricas reais do novo endpoint
         try {
-            const [statsRes, usersRes] = await Promise.all([
+            const [statsRes, usersRes, monthlyRes] = await Promise.all([
                 fetch('/dashboard/stats', {headers:this.apiHeaders()}),
-                fetch('/admin/users',     {headers:this.apiHeaders()})
+                fetch('/admin/users',     {headers:this.apiHeaders()}),
+                fetch('/dashboard/certificates-monthly', {headers:this.apiHeaders()})
             ]);
             const stats = await statsRes.json();
             const users = await usersRes.json();
+            if(monthlyRes.ok && typeof Chart !== 'undefined'){
+                const monthly = await monthlyRes.json();
+                new Chart(document.getElementById('certs-monthly-chart'), {
+                    type: 'bar',
+                    data: { labels: monthly.labels, datasets: [{ label: 'Certificados emitidos', data: monthly.values, backgroundColor: '#3b82f6', borderRadius: 4 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+                });
+            }
 
             document.getElementById('s-users').textContent      = stats.total_users      ?? '—';
             document.getElementById('s-courses').textContent    = stats.total_courses    ?? '—';
@@ -238,57 +310,93 @@ Object.assign(App, {
     async renderLeaderDashboard() {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
+        const multiTeam = (this.user.led_team_ids||[]).length > 1;
         container.innerHTML=this.sectionHeader({title:'Minha Equipe',actionLabel:'+ Convidar Colaborador',actionFn:'App.showInviteUserModal()'})+`
             <div class="grid-stats" id="team-stats" style="margin-bottom:1.5rem">
                 <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-info"><div class="stat-value" id="ts-members">—</div><div class="stat-label">Membros Ativos</div></div></div>
                 <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-info"><div class="stat-value" id="ts-andamento">—</div><div class="stat-label">Cursos em Andamento</div></div></div>
                 <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-info"><div class="stat-value" id="ts-finalizado">—</div><div class="stat-label">Cursos Finalizados</div></div></div>
             </div>
-            <div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">
+            <div class="card" style="margin-bottom:1rem;display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
+                <div style="position:relative;width:120px;height:120px;flex-shrink:0"><canvas id="team-donut"></canvas></div>
+                <div id="team-donut-legend"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;gap:0.75rem;flex-wrap:wrap">
+                ${multiTeam?`<div style="display:flex;align-items:center;gap:0.5rem">
+                    <label style="font-size:0.85rem;color:var(--text-dim);font-weight:600">Equipe:</label>
+                    <select id="team-filter" class="form-control" style="max-width:220px;width:auto">
+                        <option value="">Todas as minhas equipes</option>
+                    </select>
+                </div>`:'<span></span>'}
                 <button id="team-export-btn" style="padding:7px 14px;border-radius:8px;font-size:0.85rem;cursor:pointer;background:var(--bg-main);border:1px solid var(--border);color:var(--text-main);font-family:Outfit,sans-serif;font-weight:600">⬇ Exportar CSV</button>
             </div>
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="team-table">
-                    <thead><tr><th>Colaborador</th><th>E-mail</th><th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Cursos</th><th>Ações</th></tr></thead>
-                    <tbody><tr><td colspan="7" class="loader">Carregando</td></tr></tbody>
+                    <thead><tr><th>Colaborador</th><th>E-mail</th>${multiTeam?'<th>Equipe</th>':''}<th>Cargo</th><th>Módulos</th><th>Progresso</th><th>Cursos</th><th>Ações</th></tr></thead>
+                    <tbody><tr><td colspan="${multiTeam?8:7}" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
         try {
-            // Usa /team/progress que já filtra por equipe corretamente
+            // Usa /team/progress que já filtra por TODAS as equipes que o líder lidera
             const res=await fetch('/team/progress',{headers:this.apiHeaders()});
-            const members=await res.json();
-            const tbody=document.querySelector('#team-table tbody'); tbody.innerHTML='';
-            if(!members.length){
-                tbody.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>';
+            const allMembers=await res.json();
+            const colspan = multiTeam?8:7;
+            const tbody=document.querySelector('#team-table tbody');
+            if(!allMembers.length){
+                tbody.innerHTML=`<tr><td colspan="${colspan}"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador na equipe ainda.</p></div></td></tr>`;
                 ['ts-members','ts-andamento','ts-finalizado'].forEach(id=>document.getElementById(id).textContent='0');
                 return;
             }
-            const statusCounts=this._countCourseStatuses(members);
-            document.getElementById('ts-members').textContent=members.length;
-            document.getElementById('ts-andamento').textContent=statusCounts.em_andamento;
-            document.getElementById('ts-finalizado').textContent=statusCounts.finalizado;
-            document.getElementById('team-export-btn').onclick=()=>this._exportProgressCsv(members, 'minha_equipe.csv');
-            members.forEach(u=>{
-                const pct=u.percent||0;
-                const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
-                tbody.innerHTML+=`<tr>
-                    <td><strong>${u.username}</strong></td>
-                    <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
-                    <td style="font-size:0.82rem">${u.role}</td>
-                    <td style="font-size:0.82rem">${u.modules_done}/${u.modules_total}</td>
-                    <td style="min-width:120px">
-                        <div style="display:flex;align-items:center;gap:0.5rem">
-                            <div class="progress-track" style="flex:1;height:6px">
-                                <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
+            document.getElementById('team-export-btn').onclick=()=>this._exportProgressCsv(allMembers, 'minha_equipe.csv');
+
+            let teamFilter=null;
+            if(multiTeam){
+                teamFilter=document.getElementById('team-filter');
+                const teamsSeen=new Map();
+                allMembers.forEach(m=>{ if(m.team_id!=null) teamsSeen.set(m.team_id, m.team_name); });
+                [...teamsSeen.entries()].sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).forEach(([id,name])=>{
+                    teamFilter.innerHTML += `<option value="${id}">${name}</option>`;
+                });
+            }
+
+            const renderRows = () => {
+                const members = teamFilter && teamFilter.value ? allMembers.filter(m=>String(m.team_id)===String(teamFilter.value)) : allMembers;
+                const statusCounts=this._countCourseStatuses(members);
+                document.getElementById('ts-members').textContent=members.length;
+                document.getElementById('ts-andamento').textContent=statusCounts.em_andamento;
+                document.getElementById('ts-finalizado').textContent=statusCounts.finalizado;
+                this._renderStatusDonut('team-donut', statusCounts);
+                document.getElementById('team-donut-legend').innerHTML=this._statusDonutLegendHtml(statusCounts);
+                tbody.innerHTML='';
+                if(!members.length){
+                    tbody.innerHTML=`<tr><td colspan="${colspan}"><div class="empty-state"><div class="empty-icon">👥</div><p>Nenhum colaborador nesta equipe.</p></div></td></tr>`;
+                    return;
+                }
+                members.forEach(u=>{
+                    const pct=u.percent||0;
+                    const barColor=pct===100?'#22c55e':pct>=50?'var(--primary-light)':'#f59e0b';
+                    tbody.innerHTML+=`<tr>
+                        <td><strong>${u.username}</strong></td>
+                        <td style="font-size:0.82rem;color:var(--text-dim)">${u.email}</td>
+                        ${multiTeam?`<td style="font-size:0.82rem">${u.team_name||'—'}</td>`:''}
+                        <td style="font-size:0.82rem">${u.role}</td>
+                        <td style="font-size:0.82rem">${u.modules_done}/${u.modules_total}</td>
+                        <td style="min-width:120px">
+                            <div style="display:flex;align-items:center;gap:0.5rem">
+                                <div class="progress-track" style="flex:1;height:6px">
+                                    <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
+                                </div>
+                                <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
                             </div>
-                            <span style="font-size:0.75rem;font-weight:700;color:${barColor};width:32px;text-align:right">${pct}%</span>
-                        </div>
-                    </td>
-                    <td>${this.actionBtn(`Cursos (${u.enrollments})`,`App._toggleProgressDetail('lp-row-${u.user_id}')`)}</td>
-                    <td>${this.actionBtn('🎯 Atribuir Curso',`App.showAssignCourseModal(${u.user_id},'${u.username}')`)}</td>
-                </tr>
-                <tr id="lp-row-${u.user_id}" class="hidden"><td colspan="7" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
-            });
+                        </td>
+                        <td>${this.actionBtn(`Cursos (${u.enrollments})`,`App._toggleProgressDetail('lp-row-${u.user_id}')`)}</td>
+                        <td>${this.actionBtn('🎯 Atribuir Curso',`App.showAssignCourseModal(${u.user_id},'${u.username}')`)}</td>
+                    </tr>
+                    <tr id="lp-row-${u.user_id}" class="hidden"><td colspan="${colspan}" style="background:var(--bg-main);padding:0.75rem 1rem">${this._progressCoursesDetailHtml(u.courses)}</td></tr>`;
+                });
+            };
+            renderRows();
+            if(teamFilter) teamFilter.onchange = renderRows;
         } catch(e) { console.error('Erro ao carregar equipe:', e); }
     },
 

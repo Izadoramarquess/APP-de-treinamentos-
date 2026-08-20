@@ -42,7 +42,7 @@ Object.assign(App, {
                 <td><div style="display:flex;gap:4px;flex-wrap:wrap;padding:4px 0">
                     ${u.status==='pending'?this.actionBtn('✓ Aprovar',`App.changeUserStatus(${u.id},'ativo')`,'success'):''}
                     ${u.status==='pending'?this.actionBtn('✕ Rejeitar',`App.changeUserStatus(${u.id},'rejected')`,'danger'):''}
-                    ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0},${u.company_id||0})`)}
+                    ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0},${u.company_id||0},'${(u.led_team_ids||[]).join(',')}')`)}
                     ${this.actionBtn('🎯 Curso',`App.showAssignCourseModal(${u.id},'${u.username.replace(/'/g,"\\'")}')`)}
                     ${this.actionBtn('🔑 Resetar',`App.triggerPasswordReset(${u.id},'${u.username}')`)}
                     ${this.user.id!==u.id?this.actionBtn('🗑',`App.deleteUser(${u.id},'${u.username}')`,'danger'):''}
@@ -59,7 +59,12 @@ Object.assign(App, {
 
     async showInviteUserModal() {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
-        const teamsRes=await fetch('/teams',{headers:this.apiHeaders()}); const teams=await teamsRes.json();
+        const isLeader = this.user.role === 'lideranca';
+        const teamsRes=await fetch('/teams',{headers:this.apiHeaders()}); let teams=await teamsRes.json();
+        // Líder só convida pra uma equipe que ele mesmo lidera — /teams
+        // devolve todas as equipes da empresa (usado em outros lugares),
+        // então filtra aqui pra não oferecer opção que o backend vai rejeitar.
+        if (isLeader) teams = teams.filter(t => (this.user.led_team_ids||[]).includes(t.id));
         const companySelect = await this._companySelectHtml('iu-company');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Convidar Novo Usuário</h3>
@@ -68,16 +73,16 @@ Object.assign(App, {
                 <div class="form-group"><label>E-mail corporativo</label><input type="email" id="iu-email" class="form-control" required></div>
                 ${companySelect}
                 <div class="form-group"><label>Departamento</label><input type="text" id="iu-dept" class="form-control" required></div>
-                <div class="form-group"><label>Cargo</label>
+                ${isLeader?'':`<div class="form-group"><label>Cargo</label>
                     <select id="iu-role" class="form-control">
                         <option value="colaborador">Colaborador</option>
                         <option value="lideranca">Liderança</option>
                         <option value="admin">Administrador</option>
                     </select>
-                </div>
+                </div>`}
                 <div class="form-group"><label>Equipe</label>
                     <select id="iu-team" class="form-control">
-                        <option value="">Sem Equipe (padrão)</option>
+                        ${isLeader?'':'<option value="">Sem Equipe (padrão)</option>'}
                         ${teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}
                     </select>
                 </div>
@@ -93,12 +98,16 @@ Object.assign(App, {
             fd.append('username',document.getElementById('iu-user').value);
             fd.append('email',document.getElementById('iu-email').value);
             fd.append('department',document.getElementById('iu-dept').value);
-            fd.append('role',document.getElementById('iu-role').value);
+            const roleEl=document.getElementById('iu-role'); if(roleEl) fd.append('role',roleEl.value);
             const tid=document.getElementById('iu-team').value; if(tid) fd.append('team_id',tid);
             const companyEl=document.getElementById('iu-company'); if(companyEl) fd.append('company_id',companyEl.value);
             const res=await fetch('/admin/users/invite',{method:'POST',headers:this.apiHeaders(),body:fd});
             const data=await res.json();
-            if(res.ok){this.renderAdminUsers();this.showCopyLinkModal('Convite Gerado ✓','Envie este link para o novo usuário:',data.invite_link);}
+            if(res.ok){
+                this.closeModal();
+                if(isLeader) this.renderLeaderDashboard(); else this.renderAdminUsers();
+                this.showCopyLinkModal('Convite Gerado ✓','Envie este link para o novo usuário:',data.invite_link);
+            }
             else{alert(data.detail||'Erro ao gerar convite.');btn.disabled=false;btn.textContent='Gerar convite';}
         };
         modal.classList.remove('hidden');
@@ -155,9 +164,10 @@ Object.assign(App, {
         modal.classList.remove('hidden');
     },
 
-    async editUserRole(id, currentRole, currentTeam, currentCompany) {
+    async editUserRole(id, currentRole, currentTeam, currentCompany, currentLedTeamIds='') {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         const isSuper = this.user.role === 'super_admin';
+        const ledSet = new Set((currentLedTeamIds||'').split(',').filter(x=>x).map(Number));
         const [teamsRes, companies] = await Promise.all([
             fetch('/teams',{headers:this.apiHeaders()}),
             isSuper ? this._fetchCompanies() : Promise.resolve([])
@@ -167,6 +177,14 @@ Object.assign(App, {
             const filtered = isSuper ? teams.filter(t=>t.company_id===Number(companyId)) : teams;
             return `<option value="">Sem Equipe (padrão)</option>` +
                 filtered.map(t=>`<option value="${t.id}" ${currentTeam===t.id?'selected':''}>${t.name}</option>`).join('');
+        };
+        // Equipes lideradas é independente da equipe-base acima — um líder
+        // pode liderar mais de uma equipe ao mesmo tempo (ver App.user.led_team_ids).
+        const renderLedTeamsChecklist = (companyId) => {
+            const filtered = isSuper ? teams.filter(t=>t.company_id===Number(companyId)) : teams;
+            return filtered.map(t=>`<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.88rem;font-weight:400">
+                <input type="checkbox" class="e-led-team" value="${t.id}" ${ledSet.has(t.id)?'checked':''}>${t.name}
+            </label>`).join('') || `<p style="color:var(--text-dim);font-size:0.85rem;margin:0">Nenhuma equipe nesta empresa ainda.</p>`;
         };
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Alterar cargo</h3>
@@ -188,6 +206,12 @@ Object.assign(App, {
                         ${renderTeamOptions(currentCompany)}
                     </select>
                 </div>
+                <div class="form-group" id="e-led-teams-group" style="${currentRole==='lideranca'?'':'display:none'}">
+                    <label>Equipes lideradas</label>
+                    <div id="e-led-teams-list" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+                        ${renderLedTeamsChecklist(currentCompany)}
+                    </div>
+                </div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">Salvar</button>
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
@@ -196,14 +220,23 @@ Object.assign(App, {
         if(isSuper){
             document.getElementById('e-company').onchange=(e)=>{
                 document.getElementById('e-team').innerHTML=renderTeamOptions(e.target.value);
+                document.getElementById('e-led-teams-list').innerHTML=renderLedTeamsChecklist(e.target.value);
             };
         }
+        document.getElementById('e-role').onchange=(e)=>{
+            document.getElementById('e-led-teams-group').style.display = e.target.value==='lideranca' ? '' : 'none';
+        };
         document.getElementById('role-form').onsubmit=async(e)=>{
             e.preventDefault();
             const fd=new FormData();
-            fd.append('role',document.getElementById('e-role').value);
+            const role=document.getElementById('e-role').value;
+            fd.append('role',role);
             const tid=document.getElementById('e-team').value; if(tid) fd.append('team_id',tid);
             const companyEl=document.getElementById('e-company'); if(companyEl) fd.append('company_id',companyEl.value);
+            if(role==='lideranca'){
+                const ids=[...document.querySelectorAll('.e-led-team:checked')].map(el=>el.value);
+                fd.append('led_team_ids', ids.join(','));
+            }
             const res=await fetch(`/admin/users/${id}/role`,{method:'POST',headers:this.apiHeaders(),body:fd});
             if(!res.ok){alert((await res.json()).detail);return;}
             this.closeModal(); this.renderAdminUsers();
@@ -275,8 +308,8 @@ Object.assign(App, {
         container.innerHTML=this.sectionHeader({title:'Gestão de Equipes',actionLabel:'+ Nova Equipe',actionFn:'App.showCreateTeamModal()'})+`
             <div class="card" style="overflow-x:auto;padding:0">
                 <table id="t-table">
-                    <thead><tr><th>Nome</th>${isSuper?'<th>Empresa</th>':''}<th>Descrição</th><th>Membros</th></tr></thead>
-                    <tbody><tr><td colspan="${isSuper?4:3}" class="loader">Carregando</td></tr></tbody>
+                    <thead><tr><th>Nome</th>${isSuper?'<th>Empresa</th>':''}<th>Descrição</th><th>Líder(es)</th><th>Membros</th></tr></thead>
+                    <tbody><tr><td colspan="${isSuper?5:4}" class="loader">Carregando</td></tr></tbody>
                 </table>
             </div>`;
         const [res, companies] = await Promise.all([
@@ -286,16 +319,20 @@ Object.assign(App, {
         const teams=await res.json();
         const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
         const tbody=document.querySelector('#t-table tbody'); tbody.innerHTML='';
-        if(!teams.length){tbody.innerHTML=`<tr><td colspan="${isSuper?4:3}"><div class="empty-state"><div class="empty-icon">🏢</div><p>Nenhuma equipe criada.</p></div></td></tr>`;return;}
+        if(!teams.length){tbody.innerHTML=`<tr><td colspan="${isSuper?5:4}"><div class="empty-state"><div class="empty-icon">🏢</div><p>Nenhuma equipe criada.</p></div></td></tr>`;return;}
         teams.forEach(t=>{
             const members=t.members||[];
+            const leaders=t.leaders||[];
             tbody.innerHTML+=`<tr>
                 <td style="vertical-align:top"><strong>${t.name}</strong></td>
                 ${isSuper?`<td style="font-size:0.82rem;color:var(--text-dim);vertical-align:top">${companyName(t.company_id)}</td>`:''}
                 <td style="font-size:0.85rem;color:var(--text-dim);vertical-align:top">${t.description||'—'}</td>
+                <td style="font-size:0.85rem;vertical-align:top">
+                    ${leaders.length?leaders.map(l=>`<span style="display:block;white-space:nowrap">👑 ${l.username}</span>`).join(''):'<span style="color:var(--text-dim)">—</span>'}
+                </td>
                 <td style="font-size:0.85rem">
                     <div style="font-weight:600;margin-bottom:${members.length?'6px':'0'}">${members.length} membro${members.length!==1?'s':''}</div>
-                    ${members.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${members.map(m=>`<span title="${m.email}" style="padding:2px 9px;background:var(--bg-main);border:1px solid var(--border);border-radius:20px;font-size:0.75rem;white-space:nowrap">${m.username}${m.role==='lideranca'?' 👑':''}</span>`).join('')}</div>`:''}
+                    ${members.length?`<div style="display:flex;flex-wrap:wrap;gap:4px">${members.map(m=>`<span title="${m.email}" style="padding:2px 9px;background:var(--bg-main);border:1px solid var(--border);border-radius:20px;font-size:0.75rem;white-space:nowrap">${m.username}</span>`).join('')}</div>`:''}
                 </td>
             </tr>`;
         });

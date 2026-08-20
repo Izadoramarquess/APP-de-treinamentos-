@@ -369,6 +369,19 @@ def _init_db_locked():
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
 
+    # Líder passa a poder liderar mais de uma equipe (team_leaders é
+    # separado de users.team_id, que continua sendo só a equipe-base da
+    # pessoa) — backfill idempotente: todo líder já existente vira 1 linha
+    # aqui, preservando exatamente a equipe que ele já liderava.
+    with engine.connect() as conn:
+        conn.execute(text("""
+            INSERT INTO team_leaders (team_id, user_id)
+            SELECT team_id, id FROM users u
+            WHERE role = 'lideranca'
+              AND NOT EXISTS (SELECT 1 FROM team_leaders tl WHERE tl.user_id = u.id AND tl.team_id = u.team_id)
+        """))
+        conn.commit()
+
     # Seed admin user
     from sqlalchemy.orm import Session
     from auth import get_password_hash
