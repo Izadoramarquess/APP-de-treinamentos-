@@ -174,6 +174,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     db.query(models.Enrollment).filter(models.Enrollment.user_id == user.id).delete()
     db.query(models.ModuleProgress).filter(models.ModuleProgress.user_id == user.id).delete()
     db.query(models.Certificate).filter(models.Certificate.user_id == user.id).delete()
+    db.query(models.QuestionAttempt).filter(models.QuestionAttempt.user_id == user.id).delete()
 
     # Unlink invited_by gracefully
     db.query(models.User).filter(models.User.invited_by_id == user.id).update({"invited_by_id": None})

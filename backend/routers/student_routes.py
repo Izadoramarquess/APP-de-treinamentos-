@@ -19,16 +19,7 @@ def complete_module(
     current_user: models.User = Depends(get_current_user)
 ):
     require_enrolled_in_module(db, current_user.id, module_id)
-    # Módulos com prova final só podem ser concluídos via /modules/{id}/exam-submit,
-    # que corrige as respostas no servidor. Isso fecha o atalho de marcar
-    # "concluído" direto sem nunca ter respondido a prova.
-    has_final_exam = db.query(models.Question).filter(
-        models.Question.module_id == module_id,
-        models.Question.is_final_exam == True
-    ).first() is not None
-    if has_final_exam:
-        raise HTTPException(status_code=400, detail="Este módulo tem prova final — conclua respondendo a prova.")
-    # Perguntas inline (durante o vídeo) também precisam ter sido respondidas
+    # Perguntas inline (durante o vídeo) precisam ter sido respondidas
     # certo — o player já bloqueia isso na tela, mas só no navegador: dava
     # pra arrastar a barra de progresso do vídeo e pular a pergunta sem
     # nunca respondê-la. Aqui é a checagem que não dá pra burlar.
@@ -46,7 +37,8 @@ def complete_module(
         }
         if any(q.id not in correct_ids for q in inline_questions):
             raise HTTPException(status_code=400, detail="Responda corretamente todas as perguntas do vídeo antes de concluir o módulo.")
-    # Sem prova (só vídeo/perguntas inline): não há nota a apurar, score é fixo — nunca vindo do cliente.
+    # Módulo não tem nota própria a apurar (a prova, se houver, é do curso
+    # inteiro — ver /courses/{id}/exam-submit), score é fixo.
     certificate_issued = _mark_module_complete(db, current_user.id, module_id, 100.0)
     return {"message": "Módulo concluído!", "completed": True, "certificate_issued": certificate_issued}
 

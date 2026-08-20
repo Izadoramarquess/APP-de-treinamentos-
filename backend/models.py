@@ -101,9 +101,14 @@ class Material(Base):
     module = relationship("Module", back_populates="materials")
 
 class Question(Base):
+    """Pergunta inline (module_id preenchido, aparece num momento do vídeo)
+    OU pergunta de prova final (course_id preenchido, module_id nulo — a
+    prova cobre o curso inteiro, não um vídeo específico, e só fica
+    disponível depois que todos os módulos do curso são concluídos)."""
     __tablename__ = "questions"
     id = Column(Integer, primary_key=True, index=True)
-    module_id = Column(Integer, ForeignKey("modules.id"))
+    module_id = Column(Integer, ForeignKey("modules.id"), nullable=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
     text = Column(Text)
     option_a = Column(String)
     option_b = Column(String)
@@ -112,8 +117,9 @@ class Question(Base):
     correct_option = Column(String)
     is_final_exam = Column(Boolean, default=False)
     timestamp = Column(Float, nullable=True)
-    
+
     module = relationship("Module", back_populates="questions")
+    course = relationship("Course", foreign_keys=[course_id])
 
 class QuestionAttempt(Base):
     """Registra se o usuário já respondeu certo uma pergunta — usado pra
@@ -194,6 +200,8 @@ class MaterialSchema(BaseModel):
 # aluno possa chamar antes de responder.
 class QuestionSchema(BaseModel):
     id: int
+    module_id: Optional[int] = None
+    course_id: Optional[int] = None
     text: str
     option_a: str
     option_b: str

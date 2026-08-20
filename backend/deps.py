@@ -118,12 +118,15 @@ def iso_utc(dt: Optional[datetime.datetime]) -> Optional[str]:
         return None
     return dt.replace(tzinfo=datetime.timezone.utc).isoformat()
 
-def _check_and_issue_course_certificate(db: Session, user_id: int, course_id: int):
+def _check_and_issue_course_certificate(db: Session, user_id: int, course_id: int, exam_passed: bool = False):
     """Confere se todos os módulos do curso estão concluídos e, se sim,
-    emite o certificado (um por usuário+curso) — chamado automaticamente
-    por _mark_module_complete, nunca precisa ser disparado manualmente pelo
-    frontend. Devolve o Certificate se emitiu/já existia, ou None se ainda
-    faltam módulos."""
+    emite o certificado (um por usuário+curso). Chamado automaticamente por
+    _mark_module_complete a cada módulo concluído — mas se o curso tem
+    prova final (course-level, cobre todos os módulos), a emissão só
+    acontece de fato quando /courses/{id}/exam-submit chamar aqui de novo
+    com exam_passed=True; até lá, mesmo com todo módulo concluído, fica
+    faltando a prova. Devolve o Certificate se emitiu/já existia, ou None
+    se ainda faltam módulos ou a prova."""
     modules = db.query(models.Module).filter(models.Module.course_id == course_id).all()
     if not modules:
         return None
@@ -134,6 +137,13 @@ def _check_and_issue_course_certificate(db: Session, user_id: int, course_id: in
         models.ModuleProgress.is_completed == True
     ).count()
     if done_count < len(modules):
+        return None
+
+    has_final_exam = db.query(models.Question).filter(
+        models.Question.course_id == course_id,
+        models.Question.is_final_exam == True
+    ).first() is not None
+    if has_final_exam and not exam_passed:
         return None
 
     existing = db.query(models.Certificate).filter(

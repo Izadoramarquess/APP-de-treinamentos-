@@ -58,13 +58,16 @@ Object.assign(App, {
                 {label:courseTitle}
             ]
         })+`<div id="student-modules"><div class="loader">Carregando</div></div>`;
-        const [modulesRes, progressRes] = await Promise.all([
+        const [modulesRes, progressRes, examRes] = await Promise.all([
             fetch(`/courses/${courseId}/modules`,  {headers:this.apiHeaders()}),
-            fetch(`/courses/${courseId}/progress`, {headers:this.apiHeaders()})
+            fetch(`/courses/${courseId}/progress`, {headers:this.apiHeaders()}),
+            fetch(`/courses/${courseId}/exam-questions`, {headers:this.apiHeaders()})
         ]);
         const modules  = await modulesRes.json();
         const progress = progressRes.ok ? await progressRes.json() : [];
+        const examQuestions = examRes.ok ? await examRes.json() : [];
         const doneIds  = new Set(progress.filter(p=>p.completed).map(p=>p.module_id));
+        const allModulesDone = modules.length>0 && modules.every(m=>doneIds.has(m.id));
 
         const grid=document.getElementById('student-modules'); grid.innerHTML='';
         if(!modules.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">🎬</div><p>Nenhum módulo disponível.</p></div>';return;}
@@ -90,14 +93,25 @@ Object.assign(App, {
                 </div>
             </div>`;
         });
+
+        if(examQuestions.length){
+            grid.innerHTML+=`<div class="path-card" style="align-items:center;text-align:center;gap:0.5rem">
+                <div style="font-size:1.8rem">📝</div>
+                <h4 style="margin:0">Prova Final</h4>
+                <p style="color:var(--text-dim);font-size:0.85rem;margin:0">Cobre todos os módulos deste curso.</p>
+                ${allModulesDone
+                    ? `<button class="btn btn-primary" style="margin-top:0.5rem" onclick="App.startFinalExam(${courseId})">Iniciar Prova Final</button>`
+                    : `<span style="font-size:0.8rem;color:var(--text-light);margin-top:0.5rem">🔒 Conclua todos os módulos para liberar</span>`
+                }
+            </div>`;
+        }
     },
 
     async playModule(moduleId, courseId, alreadyDone=false) {
         const res=await fetch(`/courses/${courseId}/modules`,{headers:this.apiHeaders()}); const modules=await res.json();
         const target=modules.find(m=>m.id===moduleId);
         if(!target) return alert('Módulo não encontrado.');
-        const inlineQuizzes=(target.questions||[]).filter(q=>!q.is_final_exam);
-        const finalQuizzes =(target.questions||[]).filter(q=> q.is_final_exam);
+        const inlineQuizzes=target.questions||[];
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         modal.classList.remove('hidden');
         body.className='modal-player';
@@ -116,12 +130,7 @@ Object.assign(App, {
                     </div>
                 </div>
             </div>
-            <div id="final-exam-section" style="display:none;margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid rgba(255,255,255,.1);text-align:center">
-                <h4 style="margin-bottom:0.4rem;color:white">🎉 Vídeo concluído!</h4>
-                <p style="color:rgba(255,255,255,.6);font-size:0.88rem;margin-bottom:1rem">Responda à prova final para completar este módulo.</p>
-                <button class="btn btn-primary" id="btn-final-exam">Iniciar Prova Final</button>
-            </div>
-            ${alreadyDone&&!finalQuizzes.length?'<div style="margin-top:1rem;text-align:center;padding:0.75rem;background:rgba(34,197,94,.15);border-radius:8px;color:#86efac;font-size:0.88rem">✓ Módulo já concluído — você está revisando o conteúdo</div>':''}`;
+            ${alreadyDone?'<div style="margin-top:1rem;text-align:center;padding:0.75rem;background:rgba(34,197,94,.15);border-radius:8px;color:#86efac;font-size:0.88rem">✓ Módulo já concluído — você está revisando o conteúdo</div>':''}`;
 
         const video=document.getElementById('st-video'), asked=new Set();
         let moduleCompleted=false; // Flag para evitar duplo registro
@@ -130,16 +139,11 @@ Object.assign(App, {
             inlineQuizzes.forEach(q=>{
                 if(Math.abs(video.currentTime-q.timestamp)<0.5&&!asked.has(q.id)){asked.add(q.id);video.pause();video.controls=false;this.showQuizOverlay(q);}
             });
-            if(video.duration>0&&video.currentTime>=video.duration-1){
-                if(finalQuizzes.length>0){
-                    document.getElementById('final-exam-section').style.display='block';
-                } else if(!alreadyDone&&!moduleCompleted){
-                    moduleCompleted=true; // Previne chamadas múltiplas
-                    this.markModuleComplete(moduleId).then(ok=>{ if(!ok) moduleCompleted=false; });
-                }
+            if(video.duration>0&&video.currentTime>=video.duration-1&&!alreadyDone&&!moduleCompleted){
+                moduleCompleted=true; // Previne chamadas múltiplas
+                this.markModuleComplete(moduleId).then(ok=>{ if(!ok) moduleCompleted=false; });
             }
         };
-        if(finalQuizzes.length>0) document.getElementById('btn-final-exam').onclick=()=>this.startFinalExam(finalQuizzes, moduleId);
     },
 
     // Módulo sem prova final: só "assistiu o vídeo" — sem nota a apurar. A
@@ -196,13 +200,19 @@ Object.assign(App, {
         });
     },
 
-    // Prova final: cada resposta acumula {question_id, selected_option} e só
-    // é corrigida de verdade no servidor, todas de uma vez, em
-    // /modules/{id}/exam-submit — a nota exibida é sempre a que o servidor
-    // calculou, nunca uma contagem feita no navegador.
-    startFinalExam(questions, moduleId) {
+    // Prova final: cobre o curso inteiro, não um módulo — cada resposta
+    // acumula {question_id, selected_option} e só é corrigida de verdade no
+    // servidor, todas de uma vez, em /courses/{id}/exam-submit — a nota
+    // exibida é sempre a que o servidor calculou, nunca uma contagem feita
+    // no navegador.
+    async startFinalExam(courseId) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
+        modal.classList.remove('hidden');
         body.className='';
+        body.innerHTML='<div style="text-align:center;padding:2.5rem 0"><div class="loader">Carregando prova</div></div>';
+        const res=await fetch(`/courses/${courseId}/exam-questions`,{headers:this.apiHeaders()});
+        const questions=res.ok?await res.json():[];
+        if(!questions.length){ body.innerHTML='<p style="text-align:center;color:var(--text-dim)">Não foi possível carregar a prova.</p>'; return; }
         let current=0;
         const answers=[];
         const renderQ=()=>{
@@ -242,7 +252,7 @@ Object.assign(App, {
             body.innerHTML=`<div style="text-align:center;padding:2.5rem 0"><div class="loader">Corrigindo prova</div></div>`;
             let result={score:0,passed:false,correct_count:0,total:questions.length,certificate_issued:false};
             try{
-                const res=await fetch(`/modules/${moduleId}/exam-submit`,{method:'POST',headers:this.apiJsonHeaders(),body:JSON.stringify(answers)});
+                const res=await fetch(`/courses/${courseId}/exam-submit`,{method:'POST',headers:this.apiJsonHeaders(),body:JSON.stringify(answers)});
                 if(res.ok) result=await res.json();
             }catch(e){}
             if(result.certificate_issued) this._showCertificateToast();
@@ -254,9 +264,9 @@ Object.assign(App, {
                 <h2 style="margin-bottom:0.25rem;color:${passed?'#16a34a':'#f59e0b'}">${passed?'Aprovado!':'Tente novamente'}</h2>
                 <p style="font-size:2.5rem;font-weight:800;color:${passed?'#22c55e':'#f59e0b'};margin:0.5rem 0;line-height:1">${score}%</p>
                 <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1.5rem">${correct_count} de ${total} corretas — mínimo 80%</p>
-                ${passed?`<p style="color:#16a34a;font-size:0.88rem;margin-bottom:1rem">✓ Progresso salvo!</p>`:''}
-                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App._afterExam(${passed},${moduleId})">
-                    ${passed?'✓ Concluir módulo':'Fechar e rever o conteúdo'}
+                ${passed?`<p style="color:#16a34a;font-size:0.88rem;margin-bottom:1rem">✓ Certificado emitido!</p>`:''}
+                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App._afterExam()">
+                    ${passed?'✓ Concluir':'Fechar e rever o conteúdo'}
                 </button>
             </div>`;
         };
@@ -304,7 +314,7 @@ Object.assign(App, {
         }).join('') + `</div>`;
     },
 
-    _afterExam(passed, moduleId) {
+    _afterExam() {
         this.closeModal();
         if (this.currentCourse && this.currentCourse.id) {
             this.showStudentModules(this.currentCourse.id, this.currentCourse.title);

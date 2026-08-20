@@ -347,6 +347,25 @@ def _init_db_locked():
                 conn.execute(text("UPDATE users SET role = 'super_admin', company_id = NULL WHERE role = 'admin'"))
                 conn.commit()
 
+    # Prova final deixa de pertencer a um módulo e passa a pertencer ao
+    # curso inteiro (cobre todos os módulos, só libera quando todos estão
+    # concluídos) — questions ganha course_id, e toda pergunta que já era
+    # is_final_exam migra de module_id pra course_id (resolvido via o
+    # módulo antigo dela). Pergunta inline (is_final_exam=0) não muda nada.
+    if "questions" in inspector.get_table_names():
+        with engine.connect() as conn:
+            question_columns = [c['name'] for c in inspector.get_columns('questions')]
+            if 'course_id' not in question_columns:
+                conn.execute(text("ALTER TABLE questions ADD COLUMN course_id INTEGER REFERENCES courses(id)"))
+                conn.commit()
+            conn.execute(text("""
+                UPDATE questions SET course_id = (
+                    SELECT modules.course_id FROM modules WHERE modules.id = questions.module_id
+                ) WHERE is_final_exam = true AND course_id IS NULL AND module_id IS NOT NULL
+            """))
+            conn.execute(text("UPDATE questions SET module_id = NULL WHERE is_final_exam = true"))
+            conn.commit()
+
     # 2. Create tables based on new models
     Base.metadata.create_all(bind=engine)
 
