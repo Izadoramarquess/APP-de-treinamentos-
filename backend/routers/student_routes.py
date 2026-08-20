@@ -111,19 +111,15 @@ def get_team_progress(
 
     result = []
     for member in members:
-        total = db.query(models.ModuleProgress).filter(
-            models.ModuleProgress.user_id == member.id
-        ).count()
-        done = db.query(models.ModuleProgress).filter(
-            models.ModuleProgress.user_id == member.id,
-            models.ModuleProgress.is_completed == True
-        ).count()
         enrollments = db.query(models.Enrollment).filter(
             models.Enrollment.user_id == member.id
         ).all()
 
-        # Detalhe por curso — o agregado acima soma tudo, mas quem acompanha
-        # precisa saber EM QUAL curso a pessoa travou, não só o total.
+        # Detalhe por curso — inclui todo módulo do curso, mesmo o que a
+        # pessoa nunca abriu (sem isso, "total" só contava módulo já
+        # iniciado, e um curso com 5 módulos onde só o 1º foi assistido
+        # aparecia como 100% concluído/1 de 1 — bug real encontrado em
+        # produção). O agregado abaixo soma esse detalhe correto.
         courses_detail = []
         for enr in enrollments:
             course = db.query(models.Course).filter(models.Course.id == enr.course_id).first()
@@ -160,6 +156,8 @@ def get_team_progress(
                 "certificate_expires_at": iso_utc(cert.expires_at) if cert else None,
             })
 
+        total = sum(c["total"] for c in courses_detail)
+        done = sum(c["completed"] for c in courses_detail)
         result.append({
             "user_id": member.id,
             "username": member.username,
