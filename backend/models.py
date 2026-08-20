@@ -115,6 +115,19 @@ class Question(Base):
     
     module = relationship("Module", back_populates="questions")
 
+class QuestionAttempt(Base):
+    """Registra se o usuário já respondeu certo uma pergunta — usado pra
+    exigir, no servidor, que toda pergunta inline do vídeo tenha sido
+    respondida corretamente antes de concluir o módulo (sem isso, dava pra
+    arrastar a barra de progresso do vídeo e pular a pergunta sem
+    responder, já que a validação só existia no player, no navegador)."""
+    __tablename__ = "question_attempts"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    question_id = Column(Integer, ForeignKey("questions.id"))
+    is_correct = Column(Boolean, default=False)
+    answered_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class Enrollment(Base):
     __tablename__ = "enrollments"
     id = Column(Integer, primary_key=True, index=True)

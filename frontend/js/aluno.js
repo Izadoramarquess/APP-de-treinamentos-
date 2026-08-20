@@ -135,7 +135,7 @@ Object.assign(App, {
                     document.getElementById('final-exam-section').style.display='block';
                 } else if(!alreadyDone&&!moduleCompleted){
                     moduleCompleted=true; // Previne chamadas múltiplas
-                    this.markModuleComplete(moduleId);
+                    this.markModuleComplete(moduleId).then(ok=>{ if(!ok) moduleCompleted=false; });
                 }
             }
         };
@@ -148,17 +148,27 @@ Object.assign(App, {
     async markModuleComplete(moduleId) {
         try{
             const res=await fetch(`/modules/${moduleId}/complete`,{method:'POST',headers:this.apiHeaders()});
-            const data=res.ok?await res.json():{};
+            if(!res.ok){
+                const data=await res.json().catch(()=>({}));
+                this._showToast(data.detail||'Não foi possível concluir o módulo.', '#dc2626');
+                return false;
+            }
+            const data=await res.json();
             if(data.certificate_issued) this._showCertificateToast();
-        }catch(e){ console.error('Erro ao registrar progresso:', e); }
+            return true;
+        }catch(e){ console.error('Erro ao registrar progresso:', e); return false; }
+    },
+
+    _showToast(message, bg='#16a34a') {
+        const el=document.createElement('div');
+        el.textContent=message;
+        el.style.cssText=`position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:${bg};color:white;padding:0.8rem 1.4rem;border-radius:10px;font-size:0.88rem;font-weight:600;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:90vw;text-align:center`;
+        document.body.appendChild(el);
+        setTimeout(()=>el.remove(),4500);
     },
 
     _showCertificateToast() {
-        const el=document.createElement('div');
-        el.textContent='🎉 Certificado emitido! Confira em "Meus Certificados".';
-        el.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#16a34a;color:white;padding:0.8rem 1.4rem;border-radius:10px;font-size:0.88rem;font-weight:600;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.25)';
-        document.body.appendChild(el);
-        setTimeout(()=>el.remove(),4000);
+        this._showToast('🎉 Certificado emitido! Confira em "Meus Certificados".', '#16a34a');
     },
 
     // A resposta certa nunca vem do servidor para o aluno — cada clique é

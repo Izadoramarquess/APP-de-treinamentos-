@@ -28,7 +28,25 @@ def complete_module(
     ).first() is not None
     if has_final_exam:
         raise HTTPException(status_code=400, detail="Este módulo tem prova final — conclua respondendo a prova.")
-    # Sem prova (só vídeo): não há nota a apurar, então o score é fixo — nunca vindo do cliente.
+    # Perguntas inline (durante o vídeo) também precisam ter sido respondidas
+    # certo — o player já bloqueia isso na tela, mas só no navegador: dava
+    # pra arrastar a barra de progresso do vídeo e pular a pergunta sem
+    # nunca respondê-la. Aqui é a checagem que não dá pra burlar.
+    inline_questions = db.query(models.Question).filter(
+        models.Question.module_id == module_id,
+        models.Question.is_final_exam == False
+    ).all()
+    if inline_questions:
+        correct_ids = {
+            a.question_id for a in db.query(models.QuestionAttempt).filter(
+                models.QuestionAttempt.user_id == current_user.id,
+                models.QuestionAttempt.question_id.in_([q.id for q in inline_questions]),
+                models.QuestionAttempt.is_correct == True
+            ).all()
+        }
+        if any(q.id not in correct_ids for q in inline_questions):
+            raise HTTPException(status_code=400, detail="Responda corretamente todas as perguntas do vídeo antes de concluir o módulo.")
+    # Sem prova (só vídeo/perguntas inline): não há nota a apurar, score é fixo — nunca vindo do cliente.
     certificate_issued = _mark_module_complete(db, current_user.id, module_id, 100.0)
     return {"message": "Módulo concluído!", "completed": True, "certificate_issued": certificate_issued}
 

@@ -5,6 +5,7 @@ admin — é isso que garante que a resposta certa nunca chega ao navegador
 do aluno antes dele responder. A nota da prova é sempre calculada aqui a
 partir das respostas enviadas, nunca recebida pronta do cliente.
 """
+import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, Form, HTTPException
@@ -68,7 +69,23 @@ def check_question_answer(
     if not question:
         raise HTTPException(status_code=404, detail="Pergunta não encontrada")
     require_enrolled_in_module(db, current_user.id, question.module_id)
-    return {"correct": selected_option.strip().upper() == (question.correct_option or "").strip().upper()}
+    is_correct = selected_option.strip().upper() == (question.correct_option or "").strip().upper()
+
+    attempt = db.query(models.QuestionAttempt).filter(
+        models.QuestionAttempt.user_id == current_user.id,
+        models.QuestionAttempt.question_id == question_id
+    ).first()
+    if not attempt:
+        attempt = models.QuestionAttempt(user_id=current_user.id, question_id=question_id)
+        db.add(attempt)
+    if is_correct:
+        # só grava o acerto; um erro numa nova tentativa não desfaz um
+        # acerto anterior já registrado.
+        attempt.is_correct = True
+    attempt.answered_at = datetime.datetime.utcnow()
+    db.commit()
+
+    return {"correct": is_correct}
 
 @router.post("/modules/{module_id}/exam-submit")
 def submit_exam(
