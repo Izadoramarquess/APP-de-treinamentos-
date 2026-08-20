@@ -89,6 +89,7 @@ def update_user_role(
     user_id: int,
     role: str = Form(...),
     team_id: Optional[int] = Form(None),
+    company_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
@@ -98,6 +99,16 @@ def update_user_role(
     check_same_company(current_user, user.company_id, "usuário")
     if role == "admin" and not auth.is_allowed_email_domain(user.email):
         raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+    # Só super_admin move gente entre empresas — um admin comum nunca deve
+    # conseguir tirar alguém da própria empresa nem "roubar" de outra.
+    if company_id and current_user.role == "super_admin" and company_id != user.company_id:
+        company = db.query(models.Company).filter(models.Company.id == company_id).first()
+        if not company:
+            raise HTTPException(status_code=404, detail="Empresa não encontrada")
+        user.company_id = company_id
+        # O time antigo pertence à empresa anterior — se nenhum time novo
+        # vier explícito abaixo, cai no time padrão da empresa nova.
+        user.team_id = auth.get_default_team(db, company_id).id
     user.role = role
     # team_id vem vazio quando a opção selecionada é "Sem Equipe (padrão)" —
     # cai no mesmo time padrão usado em qualquer outro fluxo (convite, etc.),

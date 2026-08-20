@@ -42,7 +42,7 @@ Object.assign(App, {
                 <td><div style="display:flex;gap:4px;flex-wrap:wrap;padding:4px 0">
                     ${u.status==='pending'?this.actionBtn('✓ Aprovar',`App.changeUserStatus(${u.id},'ativo')`,'success'):''}
                     ${u.status==='pending'?this.actionBtn('✕ Rejeitar',`App.changeUserStatus(${u.id},'rejected')`,'danger'):''}
-                    ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0})`)}
+                    ${this.actionBtn('Cargo',`App.editUserRole(${u.id},'${u.role}',${u.team_id||0},${u.company_id||0})`)}
                     ${this.actionBtn('🎯 Curso',`App.showAssignCourseModal(${u.id},'${u.username.replace(/'/g,"\\'")}')`)}
                     ${this.actionBtn('🔑 Resetar',`App.triggerPasswordReset(${u.id},'${u.username}')`)}
                     ${this.user.id!==u.id?this.actionBtn('🗑',`App.deleteUser(${u.id},'${u.username}')`,'danger'):''}
@@ -155,12 +155,27 @@ Object.assign(App, {
         modal.classList.remove('hidden');
     },
 
-    async editUserRole(id, currentRole, currentTeam) {
+    async editUserRole(id, currentRole, currentTeam, currentCompany) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
-        const teamsRes=await fetch('/teams',{headers:this.apiHeaders()}); const teams=await teamsRes.json();
+        const isSuper = this.user.role === 'super_admin';
+        const [teamsRes, companies] = await Promise.all([
+            fetch('/teams',{headers:this.apiHeaders()}),
+            isSuper ? this._fetchCompanies() : Promise.resolve([])
+        ]);
+        const teams=await teamsRes.json();
+        const renderTeamOptions = (companyId) => {
+            const filtered = isSuper ? teams.filter(t=>t.company_id===Number(companyId)) : teams;
+            return `<option value="">Sem Equipe (padrão)</option>` +
+                filtered.map(t=>`<option value="${t.id}" ${currentTeam===t.id?'selected':''}>${t.name}</option>`).join('');
+        };
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Alterar cargo</h3>
             <form id="role-form">
+                ${isSuper?`<div class="form-group"><label>Empresa</label>
+                    <select id="e-company" class="form-control">
+                        ${companies.map(c=>`<option value="${c.id}" ${currentCompany===c.id?'selected':''}>${c.name}</option>`).join('')}
+                    </select>
+                </div>`:''}
                 <div class="form-group"><label>Cargo</label>
                     <select id="e-role" class="form-control">
                         <option value="colaborador" ${currentRole==='colaborador'?'selected':''}>Colaborador</option>
@@ -170,8 +185,7 @@ Object.assign(App, {
                 </div>
                 <div class="form-group"><label>Equipe</label>
                     <select id="e-team" class="form-control">
-                        <option value="">Sem Equipe (padrão)</option>
-                        ${teams.map(t=>`<option value="${t.id}" ${currentTeam===t.id?'selected':''}>${t.name}</option>`).join('')}
+                        ${renderTeamOptions(currentCompany)}
                     </select>
                 </div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
@@ -179,11 +193,17 @@ Object.assign(App, {
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
                 </div>
             </form>`;
+        if(isSuper){
+            document.getElementById('e-company').onchange=(e)=>{
+                document.getElementById('e-team').innerHTML=renderTeamOptions(e.target.value);
+            };
+        }
         document.getElementById('role-form').onsubmit=async(e)=>{
             e.preventDefault();
             const fd=new FormData();
             fd.append('role',document.getElementById('e-role').value);
             fd.append('team_id',document.getElementById('e-team').value);
+            const companyEl=document.getElementById('e-company'); if(companyEl) fd.append('company_id',companyEl.value);
             const res=await fetch(`/admin/users/${id}/role`,{method:'POST',headers:this.apiHeaders(),body:fd});
             if(!res.ok){alert((await res.json()).detail);return;}
             this.closeModal(); this.renderAdminUsers();
