@@ -69,7 +69,10 @@ class Course(Base):
     cima, removida por ser burocracia demais para o fluxo de subir conteúdo).
     Absorve o que antes vivia em LearningPath (is_standard_training) e em
     Module (validity_months, certificate_template_url) — o certificado
-    agora é um por curso, não um por módulo."""
+    agora é um por curso, não um por módulo.
+    Curso é global (não pertence a uma empresa) — o mesmo conteúdo serve
+    todas as empresas, só o certificado é que sai com a logo da empresa do
+    aluno (ver Certificate/User.company)."""
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True, index=True)
     order = Column(Integer, default=1)
@@ -79,12 +82,10 @@ class Course(Base):
     is_standard_training = Column(Boolean, default=False)
     validity_months = Column(Integer, nullable=True)
     certificate_template_url = Column(String, nullable=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
 
     modules = relationship("Module", back_populates="course", order_by="Module.order")
     enrollments = relationship("Enrollment", back_populates="course")
     certificates = relationship("Certificate", back_populates="course")
-    company = relationship("Company", foreign_keys=[company_id])
 
 class Module(Base):
     __tablename__ = "modules"
@@ -246,7 +247,6 @@ class CourseSchema(BaseModel):
     is_standard_training: bool = False
     validity_months: Optional[int] = None
     certificate_template_url: Optional[str] = None
-    company_id: int
     modules: List[ModuleSchema] = []
     class Config: from_attributes = True
 

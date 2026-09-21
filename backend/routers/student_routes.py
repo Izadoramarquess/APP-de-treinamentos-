@@ -238,8 +238,10 @@ def download_certificate(
         raise HTTPException(403, "Sem permissão para baixar este certificado")
 
     course = db.query(models.Course).filter(models.Course.id == cert.course_id).first()
-    company_logo_url = course.company.logo_url if course and course.company else None
-    company_name = course.company.name if course and course.company else None
+    # Curso é global (mesmo conteúdo em todas as empresas) — o certificado
+    # leva a logo/nome da empresa de quem tirou o certificado, não do curso.
+    company_logo_url = owner.company.logo_url if owner and owner.company else None
+    company_name = owner.company.name if owner and owner.company else None
     pdf_bytes = generate_certificate_pdf(
         username=owner.username if owner else "—",
         course_title=course.title if course else "—",

@@ -28,26 +28,26 @@ def dashboard_stats(
 ):
     users_q    = db.query(models.User).filter(models.User.status == "ativo")
     pending_q  = db.query(models.User).filter(models.User.status == "pending")
+    # Curso/módulo são globais agora (mesmo catálogo pra todas as empresas),
+    # então total_courses/total_modules não recortam mais por empresa.
     courses_q  = db.query(models.Course)
-    modules_q  = db.query(models.Module).join(models.Course)
-    certs_q    = db.query(models.Certificate).join(models.Course)
+    modules_q  = db.query(models.Module)
+    certs_q    = db.query(models.Certificate)
     invites_q  = db.query(models.User).filter(models.User.status == "convite_pendente")
     if current_user.role == "admin":
         users_q   = users_q.filter(models.User.company_id == current_user.company_id)
         pending_q = pending_q.filter(models.User.company_id == current_user.company_id)
         invites_q = invites_q.filter(models.User.company_id == current_user.company_id)
+        # Certificado "conta" pra empresa de quem tirou, não do curso (que
+        # agora é o mesmo pra todo mundo).
+        certs_q = certs_q.join(models.User, models.User.id == models.Certificate.user_id).filter(models.User.company_id == current_user.company_id)
     elif current_user.role == "lideranca":
         # Mesmo recorte de list_users: liderança só vê as equipes que lidera.
         led_ids = get_led_team_ids(db, current_user.id)
         users_q   = users_q.filter(models.User.team_id.in_(led_ids))
         pending_q = pending_q.filter(models.User.team_id.in_(led_ids))
         invites_q = invites_q.filter(models.User.team_id.in_(led_ids))
-    if current_user.role != "super_admin":
-        # Cursos/módulos/certificados nunca são vistos fora da própria empresa,
-        # nem por admin nem por liderança (não são recortados por equipe).
-        courses_q = courses_q.filter(models.Course.company_id == current_user.company_id)
-        modules_q = modules_q.filter(models.Course.company_id == current_user.company_id)
-        certs_q   = certs_q.filter(models.Course.company_id == current_user.company_id)
+        certs_q = certs_q.join(models.User, models.User.id == models.Certificate.user_id).filter(models.User.team_id.in_(led_ids))
     return {
         "total_users": users_q.count(),
         "pending_users": pending_q.count(),
@@ -80,12 +80,12 @@ def certificates_monthly(
     months.reverse()
     range_start = datetime.datetime(months[0][0], months[0][1], 1)
 
-    certs_q = db.query(models.Certificate).join(models.Course).filter(models.Certificate.issued_at >= range_start)
+    certs_q = db.query(models.Certificate).filter(models.Certificate.issued_at >= range_start)
     if current_user.role == "lideranca":
         led_ids = get_led_team_ids(db, current_user.id)
         certs_q = certs_q.join(models.User, models.User.id == models.Certificate.user_id).filter(models.User.team_id.in_(led_ids))
-    elif current_user.role != "super_admin":
-        certs_q = certs_q.filter(models.Course.company_id == current_user.company_id)
+    elif current_user.role == "admin":
+        certs_q = certs_q.join(models.User, models.User.id == models.Certificate.user_id).filter(models.User.company_id == current_user.company_id)
 
     counts = {ym: 0 for ym in months}
     for cert in certs_q.all():
@@ -389,14 +389,12 @@ def enroll_user(
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course: raise HTTPException(status_code=404, detail="Curso não encontrado")
 
-    # Validação de equipe e empresa para líderes — curso também precisa ser
-    # da mesma empresa do líder, senão dava pra matricular em curso alheio
-    # informando o course_id de outra empresa direto na API.
-    if current_user.role == "lideranca" and (target_user.team_id not in get_led_team_ids(db, current_user.id) or course.company_id != current_user.company_id):
-        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos da sua empresa a membros da sua equipe.")
-    # Validação de empresa para admin — nem usuário nem curso podem ser de outra empresa.
-    if current_user.role == "admin" and (target_user.company_id != current_user.company_id or course.company_id != current_user.company_id):
-        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos da sua empresa a usuários da sua empresa.")
+    # Curso é global agora (mesmo catálogo em toda empresa) — só falta
+    # garantir que o aluno matriculado seja de quem tem permissão de mexer.
+    if current_user.role == "lideranca" and target_user.team_id not in get_led_team_ids(db, current_user.id):
+        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos a membros da sua equipe.")
+    if current_user.role == "admin" and target_user.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Você só pode atribuir cursos a usuários da sua empresa.")
 
     enrollment = models.Enrollment(user_id=user_id, course_id=course_id)
     db.add(enrollment)
@@ -550,8 +548,7 @@ def create_team(
 
     # Calculado antes do dispatch para poder citar nos e-mails de convite/aviso.
     standard_courses = db.query(models.Course).filter(
-        models.Course.is_standard_training == True,
-        models.Course.company_id == resolved_company_id
+        models.Course.is_standard_training == True
     ).all()
     training_names = ", ".join(c.title for c in standard_courses) or "nenhum treinamento obrigatório definido ainda"
     base_url = os.getenv("BASE_URL", "http://localhost:8000")

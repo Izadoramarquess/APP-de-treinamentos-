@@ -10,21 +10,22 @@ from sqlalchemy.orm import Session
 
 import models
 from deps import (
-    get_db, get_current_user, authorize,
+    get_db, get_current_user, authorize, require_super_admin,
     UPLOADS_DIR, ALLOWED_VIDEO_EXT, ALLOWED_IMAGE_EXT, MAX_UPLOAD_BYTES,
     sanitize_filename, safe_filename, check_upload_size,
-    resolve_company_id as _resolve_company_id, check_same_company as _check_same_company,
 )
 
 router = APIRouter()
 
 # ---------------- Courses ----------------
+# Curso é global — não pertence a empresa nenhuma, então o catálogo é o
+# mesmo pra todo mundo. Só quem enxerga todas as empresas (super_admin)
+# pode criar/editar/excluir curso ou módulo, pra evitar uma empresa mexer
+# em conteúdo que as outras também usam; os demais papéis só visualizam
+# (admin/lideranca precisam ver o catálogo pra matricular sua gente).
 @router.get("/courses", response_model=List[models.CourseSchema])
 def list_courses(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    query = db.query(models.Course)
-    if current_user.role != "super_admin":
-        query = query.filter(models.Course.company_id == current_user.company_id)
-    return query.order_by(models.Course.order).all()
+    return db.query(models.Course).order_by(models.Course.order).all()
 
 @router.post("/courses", response_model=models.CourseSchema)
 def create_course(
@@ -33,12 +34,10 @@ def create_course(
     order: int = Form(1),
     is_standard_training: bool = Form(False),
     validity_months: int = Form(None),
-    company_id: int = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
-    resolved_company_id = _resolve_company_id(current_user, company_id)
     cert_path = None
     if certificate_template and certificate_template.filename:
         check_upload_size(certificate_template.size or 0)
@@ -52,7 +51,6 @@ def create_course(
         is_standard_training=is_standard_training,
         validity_months=validity_months,
         certificate_template_url=cert_path,
-        company_id=resolved_company_id,
     )
     db.add(course)
     db.commit()
@@ -69,12 +67,11 @@ def update_course(
     validity_months: int = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
-    _check_same_company(current_user, course.company_id, "curso")
     course.title = title
     course.description = description
     course.order = order
@@ -93,11 +90,10 @@ def update_course(
     return course
 
 @router.delete("/courses/{course_id}")
-def delete_course(course_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def delete_course(course_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(require_super_admin)):
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
-    _check_same_company(current_user, course.company_id, "curso")
     # Antes isso era responsabilidade do delete_path (que não existe mais) — o
     # Curso é o nível de topo agora, então ele mesmo limpa matrícula/certificado.
     db.query(models.Enrollment).filter(models.Enrollment.course_id == course_id).delete()
@@ -111,13 +107,10 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
 # ---------------- Modules ----------------
 @router.get("/courses/{course_id}/modules", response_model=List[models.ModuleSchema])
 def list_modules(course_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    course = db.query(models.Course).filter(models.Course.id == course_id).first()
-    if course:
-        _check_same_company(current_user, course.company_id, "curso")
     return db.query(models.Module).filter(models.Module.course_id == course_id).order_by(models.Module.order).all()
 
 @router.post("/modules/upload/init")
-def init_upload(filename: str, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def init_upload(filename: str, db: Session = Depends(get_db), current_user: models.User = Depends(require_super_admin)):
     safe_name = sanitize_filename(filename, ALLOWED_VIDEO_EXT)
     upload_dir = os.path.join(UPLOADS_DIR, "temp")
     os.makedirs(upload_dir, exist_ok=True)
@@ -127,7 +120,7 @@ def init_upload(filename: str, db: Session = Depends(get_db), current_user: mode
     return {"upload_id": upload_id, "filename": safe_name}
 
 @router.post("/modules/upload/chunk")
-def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_index: int = Form(...), chunk: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def upload_chunk(upload_id: str = Form(...), filename: str = Form(...), chunk_index: int = Form(...), chunk: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(require_super_admin)):
     safe_name = sanitize_filename(filename, ALLOWED_VIDEO_EXT)
     temp_file_path = os.path.join(UPLOADS_DIR, "temp", f"{upload_id}_{safe_name}")
     if not os.path.exists(temp_file_path):
@@ -150,12 +143,11 @@ def create_module(
     video: UploadFile = File(None),
     thumbnail: UploadFile = File(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Curso não encontrado")
-    _check_same_company(current_user, course.company_id, "curso")
 
     video_url = None
     final_dir = UPLOADS_DIR
@@ -217,7 +209,7 @@ def update_module(
     filename: str = Form(None),
     video: UploadFile = File(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
     """Título/descrição/ordem sempre atualizam. Vídeo é opcional — se vier
     (upload direto OU upload_id de um upload em pedaços já finalizado),
@@ -227,8 +219,6 @@ def update_module(
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
-    if module.course:
-        _check_same_company(current_user, module.course.company_id, "módulo")
 
     module.title = (title or "").strip() or f"Módulo {order}"
     module.description = description
@@ -275,12 +265,10 @@ def update_module(
     return module
 
 @router.delete("/modules/{module_id}")
-def delete_module(module_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(authorize(["admin"]))):
+def delete_module(module_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(require_super_admin)):
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
-    if module.course:
-        _check_same_company(current_user, module.course.company_id, "módulo")
 
     question_ids = [q.id for q in db.query(models.Question.id).filter(models.Question.module_id == module.id).all()]
     if question_ids:

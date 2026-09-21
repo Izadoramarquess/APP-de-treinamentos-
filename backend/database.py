@@ -298,7 +298,7 @@ def _init_db_locked():
         conn.execute(text("UPDATE companies SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
         conn.commit()
 
-    for _table in ("teams", "courses", "users"):
+    for _table in ("teams", "users"):
         if _table in inspector.get_table_names():
             with engine.connect() as conn:
                 _cols = [c['name'] for c in inspector.get_columns(_table)]
@@ -321,12 +321,12 @@ def _init_db_locked():
             except Exception as e:
                 print(f"Warning ao remover índice único de teams.name: {e}")
 
-    # teams.company_id e courses.company_id são sempre obrigatórios (só
-    # User.company_id fica nulo, e só para super_admin) — reforça a
-    # constraint física em Postgres, igual já é feito para outras colunas
-    # que passaram de opcionais a obrigatórias neste arquivo.
+    # teams.company_id é sempre obrigatório (só User.company_id fica nulo,
+    # e só para super_admin) — reforça a constraint física em Postgres,
+    # igual já é feito para outras colunas que passaram de opcionais a
+    # obrigatórias neste arquivo.
     if engine.dialect.name == "postgresql":
-        for _table, _col in (("teams", "company_id"), ("courses", "company_id")):
+        for _table, _col in (("teams", "company_id"),):
             if _table in inspector.get_table_names():
                 with engine.connect() as conn:
                     try:
@@ -334,6 +334,21 @@ def _init_db_locked():
                         conn.commit()
                     except Exception as e:
                         print(f"Warning while enforcing NOT NULL on {_table}.{_col}: {e}")
+
+    # Curso deixou de pertencer a uma empresa (virou catálogo global) — a
+    # coluna courses.company_id fica pra trás no banco (sem valor pra dados
+    # antigos), então a constraint NOT NULL que uma versão anterior desta
+    # migração aplicou em Postgres precisa ser relaxada, senão todo INSERT
+    # novo em courses (que não manda mais company_id) quebra.
+    if engine.dialect.name == "postgresql" and "courses" in inspector.get_table_names():
+        _course_cols = [c['name'] for c in inspector.get_columns('courses')]
+        if 'company_id' in _course_cols:
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE courses ALTER COLUMN company_id DROP NOT NULL"))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Warning while relaxing NOT NULL on courses.company_id: {e}")
 
     # Promove o admin do seed original a super_admin (enxerga as duas
     # empresas) — só roda uma vez, só se ainda não existir nenhum
@@ -431,7 +446,7 @@ def _init_db_locked():
         # Seed Course (Curso é o nível de topo agora — não existe mais trilha por cima)
         course_exists = db.query(models.Course).filter(models.Course.title == "Segurança da Informação").first()
         if not course_exists:
-            course = models.Course(title="Segurança da Informação", description="Princípios básicos de segurança digital e proteção de dados — Introdução à LGPD.", order=1, company_id=default_company_id)
+            course = models.Course(title="Segurança da Informação", description="Princípios básicos de segurança digital e proteção de dados — Introdução à LGPD.", order=1)
             db.add(course)
 
         db.commit()

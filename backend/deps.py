@@ -51,6 +51,14 @@ def authorize(allowed_roles: List[str]):
         return current_user
     return decorator
 
+def require_super_admin(current_user: models.User = Depends(get_current_user)):
+    """Igual a authorize(["super_admin"]), mas sem o bypass de admin — usado
+    na edição de conteúdo de curso (curso é global agora, então só quem
+    enxerga todas as empresas pode mexer no catálogo compartilhado)."""
+    if current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Você não tem permissão para realizar esta ação.")
+    return current_user
+
 def require_enrolled(db: Session, user_id: int, course_id: int):
     """Fronteira de autorização de quem pode ver/responder quiz e progresso
     de um módulo: estar matriculado no curso. Sem isso, qualquer usuário

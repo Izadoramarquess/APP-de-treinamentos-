@@ -390,17 +390,16 @@ Object.assign(App, {
     ════════════════════════════════════════ */
     async renderAdminCourses() {
         this._resetContainerStyles(); this.currentCourse=null;
+        // Curso é global (mesmo catálogo pra todas as empresas) — só
+        // super_admin cria/edita/exclui; admin/lideranca só navegam pra
+        // saber o que matricular na própria gente.
         const isSuper = this.user.role === 'super_admin';
         const container=document.getElementById('app-container');
-        container.innerHTML=this.sectionHeader({title:'Cursos',actionLabel:'+ Novo Curso',actionFn:'App.showCreateCourseModal()'})+
+        container.innerHTML=this.sectionHeader(isSuper?{title:'Cursos',actionLabel:'+ Novo Curso',actionFn:'App.showCreateCourseModal()'}:{title:'Cursos'})+
             `<div style="margin-bottom:1rem"><input type="text" id="c-search" class="form-control" placeholder="🔍 Buscar por título..." style="max-width:320px"></div>
             <div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
-        const [res, companies] = await Promise.all([
-            fetch('/courses',{headers:this.apiHeaders()}),
-            isSuper ? this._fetchCompanies() : Promise.resolve([])
-        ]);
+        const res = await fetch('/courses',{headers:this.apiHeaders()});
         const courses=await res.json();
-        const companyName = id => (companies.find(c=>c.id===id)||{}).name || '—';
         const wrapper=document.getElementById('courses-wrapper'); wrapper.innerHTML='';
         if(!courses.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso criado ainda.</p></div>';return;}
         document.getElementById('c-search').oninput=(e)=>{
@@ -412,12 +411,12 @@ Object.assign(App, {
         courses.forEach(c=>{
             wrapper.innerHTML+=`<div class="card" data-search="${c.title.toLowerCase()}" style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem">
                 <div style="flex:1;min-width:0">
-                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.title}${c.is_standard_training?' <span style="font-size:0.65rem;font-weight:700;color:var(--primary-light);background:rgba(37,99,235,.1);padding:2px 8px;border-radius:20px;vertical-align:middle">PADRÃO</span>':''}${isSuper?` <span style="font-size:0.7rem;color:var(--text-dim)">· ${companyName(c.company_id)}</span>`:''}</h3>
+                    <h3 style="margin:0 0 0.2rem;font-size:1rem;color:var(--primary)">${c.title}${c.is_standard_training?' <span style="font-size:0.65rem;font-weight:700;color:var(--primary-light);background:rgba(37,99,235,.1);padding:2px 8px;border-radius:20px;vertical-align:middle">PADRÃO</span>':''}</h3>
                     <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||'Sem descrição.'}</p>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${!!c.is_standard_training},${c.validity_months||0})`)}
-                    ${this.actionBtn('🗑',`App.deleteCourse(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'danger')}
+                    ${isSuper?this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${!!c.is_standard_training},${c.validity_months||0})`):''}
+                    ${isSuper?this.actionBtn('🗑',`App.deleteCourse(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'danger'):''}
                     ${this.actionBtn('Módulos →',`App.renderAdminModules(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'primary')}
                 </div>
             </div>`;
@@ -426,12 +425,10 @@ Object.assign(App, {
 
     async _courseModal(id, title, desc, is_std, valMonths, isEdit) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
-        const companySelect = isEdit ? '' : await this._companySelectHtml('c-company');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">${isEdit?'Editar':'Novo'} Curso</h3>
             <form id="cform">
                 <div class="form-group"><label>Título</label><input type="text" id="c-title" class="form-control" value="${title||''}" required></div>
-                ${companySelect}
                 <div class="form-group"><label>Descrição</label><textarea id="c-desc" class="form-control" rows="3">${desc||''}</textarea></div>
                 <div class="form-group" style="display:flex;gap:8px;align-items:center">
                     <input type="checkbox" id="c-std" ${is_std?'checked':''} style="width:16px;height:16px;accent-color:var(--primary-light)">
@@ -451,7 +448,6 @@ Object.assign(App, {
             fd.append('is_standard_training',document.getElementById('c-std').checked);
             const val=document.getElementById('c-val').value; if(val) fd.append('validity_months',val);
             const certFile=document.getElementById('c-cert').files[0]; if(certFile) fd.append('certificate_template',certFile);
-            const companyEl=document.getElementById('c-company'); if(companyEl) fd.append('company_id',companyEl.value);
             await fetch(isEdit?`/courses/${id}`:'/courses',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
             this.closeModal(); this.renderAdminCourses();
         };
@@ -467,11 +463,12 @@ Object.assign(App, {
 
     async renderAdminModules(courseId, courseTitle) {
         this._resetContainerStyles(); this.currentCourse={id:courseId,title:courseTitle};
+        const isSuper = this.user.role === 'super_admin';
         const container=document.getElementById('app-container');
         container.innerHTML=this.sectionHeader({
             title:`Módulos — ${courseTitle}`,
             backLabel:'Cursos',backFn:'App.renderAdminCourses()',
-            actionLabel:'+ Novo Módulo',actionFn:`App.showModuleUpload(${courseId},'${courseTitle.replace(/'/g,"\\'")}')`,
+            ...(isSuper?{actionLabel:'+ Novo Módulo',actionFn:`App.showModuleUpload(${courseId},'${courseTitle.replace(/'/g,"\\'")}')`}:{}),
             breadcrumbs:[{label:'Cursos',fn:'App.renderAdminCourses()'},{label:courseTitle}]
         })+`
         <div id="modules-wrapper"><div class="loader">Carregando</div></div>
@@ -510,9 +507,9 @@ Object.assign(App, {
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
                     ${m.video_url?this.actionBtn('▶ Testar vídeo',`App.previewModuleVideo('${m.video_url}','${m.title.replace(/'/g,"\\'")}')`,'primary'):'<span style="font-size:0.75rem;color:#ef4444">sem vídeo</span>'}
-                    ${this.actionBtn('✏️',`App.showEditModuleModal(${m.id},'${m.title.replace(/'/g,"\\'")}','${(m.description||'').replace(/'/g,"\\'")}',${m.order||1})`)}
-                    ${this.actionBtn('🗑',`App.deleteModule(${m.id},'${m.title.replace(/'/g,"\\'")}',${courseId})`,'danger')}
-                    ${this.actionBtn('🎮 Quiz',`App.openQuizEditor(${m.id},'${m.video_url}')`)}
+                    ${isSuper?this.actionBtn('✏️',`App.showEditModuleModal(${m.id},'${m.title.replace(/'/g,"\\'")}','${(m.description||'').replace(/'/g,"\\'")}',${m.order||1})`):''}
+                    ${isSuper?this.actionBtn('🗑',`App.deleteModule(${m.id},'${m.title.replace(/'/g,"\\'")}',${courseId})`,'danger'):''}
+                    ${isSuper?this.actionBtn('🎮 Quiz',`App.openQuizEditor(${m.id},'${m.video_url}')`):''}
                 </div>
             </div>`;
         });

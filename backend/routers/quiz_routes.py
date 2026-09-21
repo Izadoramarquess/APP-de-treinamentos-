@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlalchemy.orm import Session
 
 import models
-from deps import get_db, get_current_user, authorize, require_enrolled_in_module, check_same_company
+from deps import get_db, get_current_user, authorize, require_super_admin, require_enrolled_in_module
 
 router = APIRouter()
 
@@ -28,15 +28,13 @@ def list_questions(
 def list_questions_admin(
     module_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
     """Mesma lista de cima, mas com o gabarito, usada só na tela de edição
     do quiz, pra mostrar a resposta certa junto de cada pergunta já salva."""
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
-    if module.course:
-        check_same_company(current_user, module.course.company_id, "módulo")
     return db.query(models.Question).filter(models.Question.module_id == module_id).all()
 
 @router.post("/modules/{module_id}/questions", response_model=models.QuestionSchema)
@@ -44,13 +42,11 @@ def add_question(
     module_id: int,
     question_data: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
     module = db.query(models.Module).filter(models.Module.id == module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail="Módulo não encontrado")
-    if module.course:
-        check_same_company(current_user, module.course.company_id, "módulo")
 
     db_question = models.Question(
         module_id=module_id,
@@ -71,13 +67,11 @@ def add_question(
 def delete_question(
     question_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(authorize(["admin"]))
+    current_user: models.User = Depends(require_super_admin)
 ):
     question = db.query(models.Question).filter(models.Question.id == question_id).first()
     if not question:
         raise HTTPException(status_code=404, detail="Pergunta não encontrada")
-    if question.module and question.module.course:
-        check_same_company(current_user, question.module.course.company_id, "pergunta")
     db.query(models.QuestionAttempt).filter(models.QuestionAttempt.question_id == question_id).delete()
     db.delete(question)
     db.commit()
