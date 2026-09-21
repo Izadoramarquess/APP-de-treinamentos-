@@ -15,6 +15,12 @@ class Company(Base):
     name = Column(String, index=True)
     logo_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Quem assina o certificado por essa empresa e a cidade que aparece na
+    # data de emissão — opcionais (sem eles, o certificado só omite essas
+    # linhas em vez de mostrar em branco).
+    signatory_name = Column(String, nullable=True)
+    signatory_role = Column(String, nullable=True)
+    city = Column(String, nullable=True)
 
 class Team(Base):
     __tablename__ = "teams"
@@ -42,6 +48,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    full_name = Column(String, nullable=True)  # usado no certificado — username sozinho não é apresentável
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     role = Column(String, default="usuario") # 'super_admin', 'admin', 'lideranca', 'usuario'
@@ -82,6 +89,7 @@ class Course(Base):
     is_standard_training = Column(Boolean, default=False)
     validity_months = Column(Integer, nullable=True)
     certificate_template_url = Column(String, nullable=True)
+    workload_hours = Column(Integer, nullable=True)
 
     modules = relationship("Module", back_populates="course", order_by="Module.order")
     enrollments = relationship("Enrollment", back_populates="course")
@@ -247,12 +255,14 @@ class CourseSchema(BaseModel):
     is_standard_training: bool = False
     validity_months: Optional[int] = None
     certificate_template_url: Optional[str] = None
+    workload_hours: Optional[int] = None
     modules: List[ModuleSchema] = []
     class Config: from_attributes = True
 
 class UserSchema(BaseModel):
     id: int
     username: str
+    full_name: Optional[str] = None
     email: str
     role: str
     status: str
@@ -271,6 +281,9 @@ class CompanySchema(BaseModel):
     id: int
     name: str
     logo_url: Optional[str] = None
+    signatory_name: Optional[str] = None
+    signatory_role: Optional[str] = None
+    city: Optional[str] = None
     created_at: datetime.datetime
     class Config: from_attributes = True
 

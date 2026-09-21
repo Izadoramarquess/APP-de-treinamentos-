@@ -243,13 +243,18 @@ def download_certificate(
     company_logo_url = owner.company.logo_url if owner and owner.company else None
     company_name = owner.company.name if owner and owner.company else None
     pdf_bytes = generate_certificate_pdf(
-        username=owner.username if owner else "—",
+        username=(owner.full_name or owner.username) if owner else "—",
         course_title=course.title if course else "—",
         issued_at=cert.issued_at,
         expires_at=cert.expires_at,
         certificate_template_url=course.certificate_template_url if course else None,
         company_logo_url=company_logo_url,
         company_name=company_name,
+        workload_hours=course.workload_hours if course else None,
+        course_content=course.description if course else None,
+        signatory_name=owner.company.signatory_name if owner and owner.company else None,
+        signatory_role=owner.company.signatory_role if owner and owner.company else None,
+        city=owner.company.city if owner and owner.company else None,
     )
     safe_course_name = "".join(ch if ch.isalnum() else "_" for ch in (course.title if course else "certificado"))
     return Response(

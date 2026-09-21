@@ -34,6 +34,7 @@ def create_course(
     order: int = Form(1),
     is_standard_training: bool = Form(False),
     validity_months: int = Form(None),
+    workload_hours: int = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_super_admin)
@@ -50,6 +51,7 @@ def create_course(
         title=title, description=description, order=order,
         is_standard_training=is_standard_training,
         validity_months=validity_months,
+        workload_hours=workload_hours,
         certificate_template_url=cert_path,
     )
     db.add(course)
@@ -65,6 +67,7 @@ def update_course(
     order: int = Form(1),
     is_standard_training: bool = Form(False),
     validity_months: int = Form(None),
+    workload_hours: int = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_super_admin)
@@ -77,6 +80,7 @@ def update_course(
     course.order = order
     course.is_standard_training = is_standard_training
     course.validity_months = validity_months
+    course.workload_hours = workload_hours
 
     if certificate_template and certificate_template.filename:
         check_upload_size(certificate_template.size or 0)

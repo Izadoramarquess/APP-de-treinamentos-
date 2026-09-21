@@ -175,7 +175,7 @@ def _init_db_locked():
         with engine.connect() as conn:
             course_columns = [c['name'] for c in inspector.get_columns('courses')]
             added_any = False
-            for col, coltype in [("is_standard_training", "BOOLEAN DEFAULT 0"), ("validity_months", "INTEGER"), ("certificate_template_url", "VARCHAR")]:
+            for col, coltype in [("is_standard_training", "BOOLEAN DEFAULT 0"), ("validity_months", "INTEGER"), ("certificate_template_url", "VARCHAR"), ("workload_hours", "INTEGER")]:
                 if col not in course_columns:
                     conn.execute(text(f"ALTER TABLE courses ADD COLUMN {col} {coltype}"))
                     added_any = True
@@ -297,6 +297,24 @@ def _init_db_locked():
         # migração que não setava created_at.
         conn.execute(text("UPDATE companies SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
         conn.commit()
+
+    # Dados pro novo modelo de certificado: quem assina por essa empresa e a
+    # cidade que aparece na data de emissão.
+    with engine.connect() as conn:
+        company_columns = [c['name'] for c in inspect(engine).get_columns('companies')]
+        for col in ("signatory_name", "signatory_role", "city"):
+            if col not in company_columns:
+                conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} VARCHAR"))
+                conn.commit()
+
+    # Nome completo — username sozinho (ex.: "raul.guilherme") não é
+    # apresentável no certificado.
+    if "users" in inspector.get_table_names():
+        with engine.connect() as conn:
+            user_columns = [c['name'] for c in inspect(engine).get_columns('users')]
+            if "full_name" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN full_name VARCHAR"))
+                conn.commit()
 
     for _table in ("teams", "users"):
         if _table in inspector.get_table_names():

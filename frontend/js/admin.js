@@ -69,6 +69,7 @@ Object.assign(App, {
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Convidar Novo Usuário</h3>
             <form id="invite-user-form">
+                <div class="form-group"><label>Nome completo</label><input type="text" id="iu-fullname" class="form-control"></div>
                 <div class="form-group"><label>Nome de usuário</label><input type="text" id="iu-user" class="form-control" required></div>
                 <div class="form-group"><label>E-mail corporativo</label><input type="email" id="iu-email" class="form-control" required></div>
                 ${companySelect}
@@ -96,6 +97,7 @@ Object.assign(App, {
             const btn=e.target.querySelector('button[type="submit"]'); btn.disabled=true; btn.textContent='Gerando...';
             const fd=new FormData();
             fd.append('username',document.getElementById('iu-user').value);
+            fd.append('full_name',document.getElementById('iu-fullname').value);
             fd.append('email',document.getElementById('iu-email').value);
             fd.append('department',document.getElementById('iu-dept').value);
             const roleEl=document.getElementById('iu-role'); if(roleEl) fd.append('role',roleEl.value);
@@ -415,7 +417,7 @@ Object.assign(App, {
                     <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||'Sem descrição.'}</p>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${isSuper?this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${!!c.is_standard_training},${c.validity_months||0})`):''}
+                    ${isSuper?this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${!!c.is_standard_training},${c.validity_months||0},${c.workload_hours||0})`):''}
                     ${isSuper?this.actionBtn('🗑',`App.deleteCourse(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'danger'):''}
                     ${this.actionBtn('Módulos →',`App.renderAdminModules(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'primary')}
                 </div>
@@ -423,7 +425,7 @@ Object.assign(App, {
         });
     },
 
-    async _courseModal(id, title, desc, is_std, valMonths, isEdit) {
+    async _courseModal(id, title, desc, is_std, valMonths, workloadHours, isEdit) {
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">${isEdit?'Editar':'Novo'} Curso</h3>
@@ -435,6 +437,7 @@ Object.assign(App, {
                     <label style="margin:0;font-size:0.88rem">Treinamento obrigatório padronizado</label>
                 </div>
                 <div class="form-group"><label>Validade do certificado (meses)</label><input type="number" id="c-val" class="form-control" value="${valMonths||''}" placeholder="Padrão: 12"></div>
+                <div class="form-group"><label>Carga horária (horas)</label><input type="number" id="c-workload" class="form-control" value="${workloadHours||''}" placeholder="Ex: 8"></div>
                 <div class="form-group"><label>Template de certificado (opcional)</label><input type="file" id="c-cert" class="form-control" accept="image/*"></div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">${isEdit?'Salvar':'Criar'}</button>
@@ -447,14 +450,15 @@ Object.assign(App, {
             fd.append('description',document.getElementById('c-desc').value);
             fd.append('is_standard_training',document.getElementById('c-std').checked);
             const val=document.getElementById('c-val').value; if(val) fd.append('validity_months',val);
+            const workload=document.getElementById('c-workload').value; if(workload) fd.append('workload_hours',workload);
             const certFile=document.getElementById('c-cert').files[0]; if(certFile) fd.append('certificate_template',certFile);
             await fetch(isEdit?`/courses/${id}`:'/courses',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
             this.closeModal(); this.renderAdminCourses();
         };
         modal.classList.remove('hidden');
     },
-    showCreateCourseModal()                            { this._courseModal(null,'','',false,null,false); },
-    showEditCourseModal(id,title,desc,is_std,valMonths) { this._courseModal(id,title,desc,is_std,valMonths,true); },
+    showCreateCourseModal()                                            { this._courseModal(null,'','',false,null,null,false); },
+    showEditCourseModal(id,title,desc,is_std,valMonths,workloadHours)  { this._courseModal(id,title,desc,is_std,valMonths,workloadHours,true); },
     async deleteCourse(id, title) {
         if(!confirm(`Excluir o curso "${title}"?\nTodos os módulos serão removidos.`)) return;
         await fetch(`/courses/${id}`,{method:'DELETE',headers:this.apiHeaders()});

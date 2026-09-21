@@ -54,6 +54,7 @@ class TokenData(BaseModel):
 
 class UserCreate(BaseModel):
     username: str
+    full_name: str
     email: str
     password: str
     department: str
@@ -65,6 +66,13 @@ class UserCreate(BaseModel):
     def department_not_blank(cls, v):
         if not v or not v.strip():
             raise ValueError("Departamento é obrigatório.")
+        return v.strip()
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_not_blank(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Nome completo é obrigatório.")
         return v.strip()
 
 class LoginRequest(BaseModel):
@@ -171,6 +179,7 @@ def register_user(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
+        full_name=user.full_name,
         email=user.email,
         hashed_password=hashed_password,
         department=user.department,
