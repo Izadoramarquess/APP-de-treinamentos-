@@ -475,24 +475,6 @@ Object.assign(App, {
             breadcrumbs:[{label:'Cursos',fn:'App.renderAdminCourses()'},{label:courseTitle}]
         })+`
         <div id="modules-wrapper"><div class="loader">Carregando</div></div>
-        <div class="card" id="exam-editor-section" style="margin-top:2rem;border-top:3px solid #ef4444">
-            <h3 style="margin-bottom:0.25rem;color:var(--primary)">Prova Final do curso</h3>
-            <p style="font-size:0.82rem;color:var(--text-dim);margin:0 0 1rem">Cobre todos os módulos acima — só fica disponível para o aluno depois que ele concluir todos eles.</p>
-            <div id="exam-q-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-bottom:1rem"></div>
-            <form id="exam-form">
-                <div class="form-group"><label>Nova pergunta da prova</label><input type="text" id="eq-text" class="form-control" required placeholder="Digite a pergunta"></div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1rem">
-                    <input type="text" id="eq-a" class="form-control" placeholder="A)" required>
-                    <input type="text" id="eq-b" class="form-control" placeholder="B)" required>
-                    <input type="text" id="eq-c" class="form-control" placeholder="C)" required>
-                    <input type="text" id="eq-d" class="form-control" placeholder="D)" required>
-                </div>
-                <div class="form-group"><label>Opção correta</label>
-                    <select id="eq-corr" class="form-control"><option>A</option><option>B</option><option>C</option><option>D</option></select>
-                </div>
-                <button type="submit" class="btn btn-primary" style="width:100%">Salvar pergunta da prova</button>
-            </form>
-        </div>
         <div class="card hidden" id="module-upload-card" style="margin-top:2rem;border-top:3px solid var(--primary-light)">
             <h3 id="module-upload-title" style="margin-bottom:1.5rem;color:var(--primary)">Novo Módulo</h3>
             <form id="module-upload-form">
@@ -535,34 +517,6 @@ Object.assign(App, {
             </div>`;
         });
         this.bindModuleForm();
-        this._renderExamQuestionList(courseId);
-        document.getElementById('exam-form').onsubmit=async(e)=>{
-            e.preventDefault();
-            const payload={text:document.getElementById('eq-text').value,option_a:document.getElementById('eq-a').value,option_b:document.getElementById('eq-b').value,option_c:document.getElementById('eq-c').value,option_d:document.getElementById('eq-d').value,correct_option:document.getElementById('eq-corr').value};
-            const res=await fetch(`/courses/${courseId}/exam-questions`,{method:'POST',headers:this.apiJsonHeaders(),body:JSON.stringify(payload)});
-            if(!res.ok){alert(await this._errorDetail(res,'Erro ao salvar pergunta.'));return;}
-            e.target.reset();
-            this._renderExamQuestionList(courseId);
-        };
-    },
-
-    async _renderExamQuestionList(courseId) {
-        const res=await fetch(`/admin/courses/${courseId}/exam-questions`,{headers:this.apiHeaders()});
-        const questions=res.ok?await res.json():[];
-        const list=document.getElementById('exam-q-list');
-        if(!list) return;
-        list.innerHTML = questions.length ? questions.map(q=>`
-            <div style="background:var(--bg-main);border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-                <p style="margin:0;font-size:0.85rem;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${q.text} <span style="color:var(--text-dim);font-size:0.78rem">· certa: ${q.correct_option}</span></p>
-                ${this.actionBtn('🗑',`App.deleteExamQuestion(${q.id},${courseId})`,'danger')}
-            </div>`).join('') : `<p style="color:var(--text-dim);font-size:0.85rem;margin:0">Nenhuma pergunta cadastrada ainda.</p>`;
-    },
-
-    async deleteExamQuestion(questionId, courseId) {
-        if(!confirm('Excluir esta pergunta da prova final?')) return;
-        const res=await fetch(`/questions/${questionId}`,{method:'DELETE',headers:this.apiHeaders()});
-        if(!res.ok){alert(await this._errorDetail(res,'Erro ao excluir.'));return;}
-        this._renderExamQuestionList(courseId);
     },
 
     showEditModuleModal(id, title, desc, order) {

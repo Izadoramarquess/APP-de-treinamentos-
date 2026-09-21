@@ -104,14 +104,6 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
     db.query(models.Certificate).filter(models.Certificate.course_id == course_id).delete()
     for module in db.query(models.Module).filter(models.Module.course_id == course.id).all():
         delete_module(module.id, db, current_user)
-    # Perguntas da prova final pertencem ao curso, não a um módulo — o loop
-    # acima (via delete_module) só limpa pergunta inline. Sem isso, excluir
-    # o curso deixava a prova final órfã (question.course_id apontando pra
-    # curso já excluído) junto com as tentativas registradas nela.
-    exam_question_ids = [q.id for q in db.query(models.Question.id).filter(models.Question.course_id == course_id).all()]
-    if exam_question_ids:
-        db.query(models.QuestionAttempt).filter(models.QuestionAttempt.question_id.in_(exam_question_ids)).delete(synchronize_session=False)
-        db.query(models.Question).filter(models.Question.course_id == course_id).delete(synchronize_session=False)
     db.delete(course)
     db.commit()
     return {"message": "Curso excluído com sucesso"}

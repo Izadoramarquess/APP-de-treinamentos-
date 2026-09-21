@@ -58,16 +58,13 @@ Object.assign(App, {
                 {label:courseTitle}
             ]
         })+`<div id="student-modules"><div class="loader">Carregando</div></div>`;
-        const [modulesRes, progressRes, examRes] = await Promise.all([
+        const [modulesRes, progressRes] = await Promise.all([
             fetch(`/courses/${courseId}/modules`,  {headers:this.apiHeaders()}),
-            fetch(`/courses/${courseId}/progress`, {headers:this.apiHeaders()}),
-            fetch(`/courses/${courseId}/exam-questions`, {headers:this.apiHeaders()})
+            fetch(`/courses/${courseId}/progress`, {headers:this.apiHeaders()})
         ]);
         const modules  = await modulesRes.json();
         const progress = progressRes.ok ? await progressRes.json() : [];
-        const examQuestions = examRes.ok ? await examRes.json() : [];
         const doneIds  = new Set(progress.filter(p=>p.completed).map(p=>p.module_id));
-        const allModulesDone = modules.length>0 && modules.every(m=>doneIds.has(m.id));
 
         const grid=document.getElementById('student-modules'); grid.innerHTML='';
         if(!modules.length){grid.innerHTML='<div class="empty-state"><div class="empty-icon">🎬</div><p>Nenhum módulo disponível.</p></div>';return;}
@@ -93,18 +90,6 @@ Object.assign(App, {
                 </div>
             </div>`;
         });
-
-        if(examQuestions.length){
-            grid.innerHTML+=`<div class="path-card" style="align-items:center;text-align:center;gap:0.5rem">
-                <div style="font-size:1.8rem">📝</div>
-                <h4 style="margin:0">Prova Final</h4>
-                <p style="color:var(--text-dim);font-size:0.85rem;margin:0">Cobre todos os módulos deste curso.</p>
-                ${allModulesDone
-                    ? `<button class="btn btn-primary" style="margin-top:0.5rem" onclick="App.startFinalExam(${courseId})">Iniciar Prova Final</button>`
-                    : `<span style="font-size:0.8rem;color:var(--text-light);margin-top:0.5rem">🔒 Conclua todos os módulos para liberar</span>`
-                }
-            </div>`;
-        }
     },
 
     async playModule(moduleId, courseId, alreadyDone=false) {
@@ -200,79 +185,6 @@ Object.assign(App, {
         });
     },
 
-    // Prova final: cobre o curso inteiro, não um módulo — cada resposta
-    // acumula {question_id, selected_option} e só é corrigida de verdade no
-    // servidor, todas de uma vez, em /courses/{id}/exam-submit — a nota
-    // exibida é sempre a que o servidor calculou, nunca uma contagem feita
-    // no navegador.
-    async startFinalExam(courseId) {
-        const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
-        modal.classList.remove('hidden');
-        body.className='';
-        body.innerHTML='<div style="text-align:center;padding:2.5rem 0"><div class="loader">Carregando prova</div></div>';
-        const res=await fetch(`/courses/${courseId}/exam-questions`,{headers:this.apiHeaders()});
-        const questions=res.ok?await res.json():[];
-        if(!questions.length){ body.innerHTML='<p style="text-align:center;color:var(--text-dim)">Não foi possível carregar a prova.</p>'; return; }
-        let current=0;
-        const answers=[];
-        const renderQ=()=>{
-            const q=questions[current];
-            body.innerHTML=`
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-                    <h3 style="margin:0;color:var(--primary)">Prova Final</h3>
-                    <span style="font-size:0.8rem;color:var(--text-dim);background:var(--bg-main);padding:4px 12px;border-radius:20px">${current+1} / ${questions.length}</span>
-                </div>
-                <div style="background:var(--bg-main);border-radius:10px;padding:1.25rem;margin-bottom:1.25rem;border-left:4px solid var(--primary-light)">
-                    <p style="font-weight:600;margin:0;line-height:1.55">${q.text}</p>
-                </div>
-                <div id="exam-opts" style="display:flex;flex-direction:column;gap:0.5rem"></div>`;
-            const opts=document.getElementById('exam-opts');
-            ['A','B','C','D'].forEach(l=>{
-                const btn=document.createElement('button');
-                btn.textContent=`${l})  ${q['option_'+l.toLowerCase()]}`;
-                btn.style.cssText='text-align:left;padding:0.8rem 1.1rem;border-radius:10px;background:var(--bg-main);border:1px solid var(--border);cursor:pointer;font-size:0.88rem;font-family:Outfit,sans-serif;transition:all .15s';
-                btn.onmouseover=()=>{if(!btn.disabled)btn.style.borderColor='var(--primary-light)';};
-                btn.onmouseout =()=>{if(!btn.disabled)btn.style.borderColor='var(--border)';};
-                btn.onclick=async ()=>{
-                    opts.querySelectorAll('button').forEach(b=>b.disabled=true);
-                    answers.push({question_id:q.id, selected_option:l});
-                    // Feedback visual imediato só da opção clicada — o servidor
-                    // não devolve qual era a certa, então não dá pra destacá-la aqui.
-                    const fd=new FormData(); fd.append('selected_option', l);
-                    const res=await fetch(`/questions/${q.id}/check`,{method:'POST',headers:this.apiHeaders(),body:fd});
-                    const data=res.ok?await res.json():{correct:false};
-                    if(data.correct){btn.style.background='#22c55e18';btn.style.borderColor='#22c55e50';btn.style.color='#16a34a';}
-                    else{btn.style.background='#ef444418';btn.style.borderColor='#ef444450';btn.style.color='#dc2626';}
-                    setTimeout(()=>{current++;if(current<questions.length)renderQ();else finish();},1000);
-                };
-                opts.appendChild(btn);
-            });
-        };
-        const finish=async ()=>{
-            body.innerHTML=`<div style="text-align:center;padding:2.5rem 0"><div class="loader">Corrigindo prova</div></div>`;
-            let result={score:0,passed:false,correct_count:0,total:questions.length,certificate_issued:false};
-            try{
-                const res=await fetch(`/courses/${courseId}/exam-submit`,{method:'POST',headers:this.apiJsonHeaders(),body:JSON.stringify(answers)});
-                if(res.ok) result=await res.json();
-            }catch(e){}
-            if(result.certificate_issued) this._showCertificateToast();
-            showResult(result);
-        };
-        const showResult=({score,passed,correct_count,total})=>{
-            body.innerHTML=`<div style="text-align:center;padding:1.5rem 0">
-                <div style="font-size:3.5rem;margin-bottom:0.75rem">${passed?'🎉':'📚'}</div>
-                <h2 style="margin-bottom:0.25rem;color:${passed?'#16a34a':'#f59e0b'}">${passed?'Aprovado!':'Tente novamente'}</h2>
-                <p style="font-size:2.5rem;font-weight:800;color:${passed?'#22c55e':'#f59e0b'};margin:0.5rem 0;line-height:1">${score}%</p>
-                <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1.5rem">${correct_count} de ${total} corretas — mínimo 80%</p>
-                ${passed?`<p style="color:#16a34a;font-size:0.88rem;margin-bottom:1rem">✓ Certificado emitido!</p>`:''}
-                <button class="btn ${passed?'btn-primary':'btn-outline'}" style="padding:0.65rem 2rem" onclick="App._afterExam()">
-                    ${passed?'✓ Concluir':'Fechar e rever o conteúdo'}
-                </button>
-            </div>`;
-        };
-        renderQ();
-    },
-
     async renderStudentCertificates() {
         this._resetContainerStyles();
         const container=document.getElementById('app-container');
@@ -312,14 +224,5 @@ Object.assign(App, {
                 </div>
             </div>`;
         }).join('') + `</div>`;
-    },
-
-    _afterExam() {
-        this.closeModal();
-        if (this.currentCourse && this.currentCourse.id) {
-            this.showStudentModules(this.currentCourse.id, this.currentCourse.title);
-        } else {
-            this.renderStudentDashboard();
-        }
     },
 });

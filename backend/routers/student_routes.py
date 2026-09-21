@@ -23,10 +23,7 @@ def complete_module(
     # certo — o player já bloqueia isso na tela, mas só no navegador: dava
     # pra arrastar a barra de progresso do vídeo e pular a pergunta sem
     # nunca respondê-la. Aqui é a checagem que não dá pra burlar.
-    inline_questions = db.query(models.Question).filter(
-        models.Question.module_id == module_id,
-        models.Question.is_final_exam == False
-    ).all()
+    inline_questions = db.query(models.Question).filter(models.Question.module_id == module_id).all()
     if inline_questions:
         correct_ids = {
             a.question_id for a in db.query(models.QuestionAttempt).filter(
@@ -37,8 +34,7 @@ def complete_module(
         }
         if any(q.id not in correct_ids for q in inline_questions):
             raise HTTPException(status_code=400, detail="Responda corretamente todas as perguntas do vídeo antes de concluir o módulo.")
-    # Módulo não tem nota própria a apurar (a prova, se houver, é do curso
-    # inteiro — ver /courses/{id}/exam-submit), score é fixo.
+    # Módulo não tem nota própria a apurar, score é fixo.
     certificate_issued = _mark_module_complete(db, current_user.id, module_id, 100.0)
     return {"message": "Módulo concluído!", "completed": True, "certificate_issued": certificate_issued}
 

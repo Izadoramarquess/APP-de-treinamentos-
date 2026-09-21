@@ -90,8 +90,7 @@ if mod_id:
         "option_c": "Controlar o acesso à internet",
         "option_d": "Definir impostos digitais",
         "correct_option": "a",
-        "timestamp": 10,
-        "is_final_exam": False
+        "timestamp": 10
     }
     r_quiz = requests.post(
         f"{BASE_URL}/modules/{mod_id}/questions",
