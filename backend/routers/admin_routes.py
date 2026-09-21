@@ -131,7 +131,7 @@ def update_user_status(user_id: int, new_status: str = Form(None), role: str = F
         raise HTTPException(status_code=404, detail="User not found")
     check_same_company(current_user, user.company_id, "usuário")
     if role == "admin" and not auth.is_allowed_email_domain(user.email):
-        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+        raise HTTPException(status_code=400, detail=f"Apenas e-mails corporativos ({auth.allowed_email_domains_text()}) podem ser administradores.")
     if new_status: user.status = new_status
     if role: user.role = role
     # Time é obrigatório: 0/ausência de escolha vai para o time padrão, nunca para nulo.
@@ -165,7 +165,7 @@ def update_user_role(
         raise HTTPException(status_code=404, detail="User not found")
     check_same_company(current_user, user.company_id, "usuário")
     if role == "admin" and not auth.is_allowed_email_domain(user.email):
-        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+        raise HTTPException(status_code=400, detail=f"Apenas e-mails corporativos ({auth.allowed_email_domains_text()}) podem ser administradores.")
     # Só super_admin move gente entre empresas — um admin comum nunca deve
     # conseguir tirar alguém da própria empresa nem "roubar" de outra.
     if company_id and current_user.role == "super_admin" and company_id != user.company_id:
@@ -267,7 +267,7 @@ def _create_invite_record(db: Session, username: str, email: str, role: str, dep
     importação em lote (/admin/users/bulk-invite) — mesma validação, mesmo
     e-mail, um único lugar pra manter certo."""
     if role == "admin" and not auth.is_allowed_email_domain(email):
-        raise ValueError("Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+        raise ValueError(f"Apenas e-mails corporativos ({auth.allowed_email_domains_text()}) podem ser administradores.")
 
     existing_user = db.query(models.User).filter(models.User.email == email).first()
     if existing_user:
@@ -533,7 +533,7 @@ def create_team(
     current_user: models.User = Depends(authorize(["admin"]))
 ):
     if not auth.is_allowed_email_domain(team_admin_email):
-        raise HTTPException(status_code=400, detail="Apenas e-mails corporativos @geobiogas.tech podem ser administradores.")
+        raise HTTPException(status_code=400, detail=f"Apenas e-mails corporativos ({auth.allowed_email_domains_text()}) podem ser administradores.")
 
     resolved_company_id = resolve_company_id(current_user, company_id)
 
@@ -561,7 +561,7 @@ def create_team(
 
     def dispatch_team_member(email_addr, is_admin):
         if not auth.is_allowed_email_domain(email_addr):
-            raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
+            raise HTTPException(status_code=400, detail=f"Apenas usuários com e-mail corporativo ({auth.allowed_email_domains_text()}) podem acessar a plataforma.")
         user = db.query(models.User).filter(models.User.email == email_addr).first()
         if user:
             # BUG 3 CORRIGIDO: admin/super_admin são os papéis mais altos — nunca podem ser vinculados como membro de equipe

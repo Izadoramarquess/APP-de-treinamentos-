@@ -38,6 +38,13 @@ def is_allowed_email_domain(email: str) -> bool:
     domain = (email or "").lower().rsplit("@", 1)[-1]
     return domain in ALLOWED_EMAIL_DOMAINS
 
+def allowed_email_domains_text() -> str:
+    """Lista os domínios permitidos pra usar nas mensagens de erro — sem
+    isso, toda mensagem citava "@geobiogas.tech" na mão, o que passou a
+    ficar errado assim que uma segunda empresa (com outro domínio) foi
+    liberada em ALLOWED_EMAIL_DOMAINS."""
+    return " ou ".join(f"@{d}" for d in ALLOWED_EMAIL_DOMAINS)
+
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -123,7 +130,7 @@ def get_default_team(db: Session, company_id: int) -> models.Team:
 
 def register_user(db: Session, user: UserCreate):
     if not is_allowed_email_domain(user.email):
-        raise HTTPException(status_code=400, detail="Apenas usuários com e-mail corporativo @geobiogas.tech podem acessar a plataforma.")
+        raise HTTPException(status_code=400, detail=f"Apenas usuários com e-mail corporativo ({allowed_email_domains_text()}) podem acessar a plataforma.")
 
     company = db.query(models.Company).filter(models.Company.id == user.company_id).first()
     if not company:
