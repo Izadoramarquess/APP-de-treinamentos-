@@ -130,12 +130,43 @@ const App = {
         body.innerHTML = `
             <h3 style="margin-bottom:0.5rem">${title}</h3>
             <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:1rem">${message}</p>
-            <div style="padding:0.9rem 1rem;background:var(--bg-main);border:1.5px dashed var(--border-dark);border-radius:8px;word-break:break-all;font-family:monospace;font-size:0.82rem;color:var(--primary-light);margin-bottom:1rem;user-select:all">${link}</div>
+            <div style="padding:0.9rem 1rem;background:var(--bg-main);border:1.5px dashed var(--border-dark);border-radius:8px;word-break:break-all;font-family:monospace;font-size:0.82rem;color:var(--primary-light);margin-bottom:1rem;user-select:all" id="copy-link-text">${link}</div>
             <div style="display:flex;gap:0.5rem">
-                <button class="btn btn-primary" style="flex:1" onclick="navigator.clipboard.writeText('${link}').then(()=>{this.textContent='✓ Copiado!';setTimeout(()=>this.textContent='📋 Copiar link',2000)})">📋 Copiar link</button>
+                <button class="btn btn-primary" style="flex:1" onclick="App._copyLinkToClipboard(this)">📋 Copiar link</button>
                 <button class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Fechar</button>
             </div>`;
         modal.classList.remove('hidden');
+    },
+
+    // navigator.clipboard só existe em contexto seguro (https, ou localhost)
+    // — em produção servida por http puro (comum numa rede interna sem
+    // certificado) a API nem existe, e o botão falhava em silêncio, sem
+    // nenhum feedback pra quem clicava. document.execCommand('copy') é
+    // depreciado mas continua funcionando em qualquer contexto, então
+    // serve de fallback pra esse caso.
+    async _copyLinkToClipboard(btn) {
+        const text = document.getElementById('copy-link-text').textContent;
+        let ok = false;
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                ok = true;
+            }
+        } catch (e) { /* cai no fallback abaixo */ }
+        if (!ok) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.focus(); ta.select();
+                ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+            } catch (e) { ok = false; }
+        }
+        btn.textContent = ok ? '✓ Copiado!' : '⚠ Selecione o link acima e copie (Ctrl+C)';
+        setTimeout(() => { btn.textContent = '📋 Copiar link'; }, ok ? 2000 : 3500);
     },
 
     sectionHeader({ title, backLabel, backFn, actionLabel, actionFn, breadcrumbs } = {}) {
