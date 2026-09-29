@@ -262,7 +262,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     db.commit()
     return {"message": "Usuário excluído com sucesso"}
 
-def _create_invite_record(db: Session, username: str, email: str, role: str, department: Optional[str], team_id: Optional[int], invited_by_id: int, company_id: int, full_name: Optional[str] = None) -> dict:
+def _create_invite_record(db: Session, username: str, email: str, role: str, department: Optional[str], team_id: Optional[int], invited_by_id: int, company_id: int, full_name: Optional[str] = None, cpf: Optional[str] = None) -> dict:
     """Núcleo compartilhado entre o convite avulso (/admin/users/invite) e a
     importação em lote (/admin/users/bulk-invite) — mesma validação, mesmo
     e-mail, um único lugar pra manter certo."""
@@ -282,6 +282,7 @@ def _create_invite_record(db: Session, username: str, email: str, role: str, dep
     db_user = models.User(
         username=username,
         full_name=(full_name or "").strip() or None,
+        cpf=(cpf or "").strip() or None,
         email=email,
         hashed_password=get_password_hash(uuid.uuid4().hex),
         role=role,
@@ -311,6 +312,7 @@ def _create_invite_record(db: Session, username: str, email: str, role: str, dep
 def invite_user_admin(
     username: str = Form(...),
     full_name: Optional[str] = Form(None),
+    cpf: Optional[str] = Form(None),
     email: str = Form(...),
     role: str = Form("usuario"),
     department: Optional[str] = Form(None),
@@ -331,7 +333,7 @@ def invite_user_admin(
         role = "usuario"
     resolved_company_id = resolve_company_id(current_user, company_id)
     try:
-        return _create_invite_record(db, username, email, role, department, team_id, current_user.id, resolved_company_id, full_name)
+        return _create_invite_record(db, username, email, role, department, team_id, current_user.id, resolved_company_id, full_name, cpf)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -343,10 +345,10 @@ async def bulk_invite_users(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["admin"]))
 ):
-    """CSV com colunas username,email,department,role,team,full_name (team,
-    role e full_name são opcionais — role vira 'usuario' e team vira a
-    equipe padrão se vazios). Processa linha a linha; uma linha com erro
-    não derruba as outras."""
+    """CSV com colunas username,email,department,role,team,full_name,cpf
+    (team, role, full_name e cpf são opcionais — role vira 'usuario' e team
+    vira a equipe padrão se vazios). Processa linha a linha; uma linha com
+    erro não derruba as outras."""
     import csv
     import io
 
@@ -372,7 +374,7 @@ async def bulk_invite_users(
         role = row.get("role") or "usuario"
         team_id = teams_by_name.get((row.get("team") or "").strip().lower())
         try:
-            invite = _create_invite_record(db, username, email, role, row.get("department"), team_id, current_user.id, resolved_company_id, row.get("full_name"))
+            invite = _create_invite_record(db, username, email, role, row.get("department"), team_id, current_user.id, resolved_company_id, row.get("full_name"), row.get("cpf"))
             results.append({"line": i, "email": email, "status": "ok", "invite_link": invite["invite_link"], "email_sent": invite["email_sent"]})
         except ValueError as e:
             results.append({"line": i, "email": email, "status": "erro", "detail": str(e)})
@@ -664,6 +666,7 @@ def create_company(
     signatory_name: str = Form(None),
     signatory_role: str = Form(None),
     city: str = Form(None),
+    cnpj: str = Form(None),
     logo: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["super_admin"]))
@@ -676,7 +679,7 @@ def create_company(
             shutil.copyfileobj(logo.file, buffer)
         logo_path = f"/uploads/{logo_filename}"
 
-    company = models.Company(name=name, logo_url=logo_path, signatory_name=signatory_name, signatory_role=signatory_role, city=city)
+    company = models.Company(name=name, logo_url=logo_path, signatory_name=signatory_name, signatory_role=signatory_role, city=city, cnpj=cnpj)
     db.add(company)
     db.commit()
     db.refresh(company)
@@ -689,6 +692,7 @@ def update_company(
     signatory_name: str = Form(None),
     signatory_role: str = Form(None),
     city: str = Form(None),
+    cnpj: str = Form(None),
     logo: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(authorize(["super_admin"]))
@@ -700,6 +704,7 @@ def update_company(
     company.signatory_name = signatory_name
     company.signatory_role = signatory_role
     company.city = city
+    company.cnpj = cnpj
     if logo and logo.filename:
         check_upload_size(logo.size or 0)
         logo_filename = f"company_logo_{safe_filename(logo.filename, ALLOWED_IMAGE_EXT)}"

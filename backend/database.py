@@ -298,22 +298,40 @@ def _init_db_locked():
         conn.execute(text("UPDATE companies SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
         conn.commit()
 
-    # Dados pro novo modelo de certificado: quem assina por essa empresa e a
-    # cidade que aparece na data de emissão.
+    # Dados pro novo modelo de certificado: quem assina por essa empresa, a
+    # cidade que aparece na data de emissão, e o CNPJ (usado no certificado
+    # modelo "nr").
     with engine.connect() as conn:
         company_columns = [c['name'] for c in inspect(engine).get_columns('companies')]
-        for col in ("signatory_name", "signatory_role", "city"):
+        for col in ("signatory_name", "signatory_role", "city", "cnpj"):
             if col not in company_columns:
                 conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} VARCHAR"))
                 conn.commit()
 
     # Nome completo — username sozinho (ex.: "raul.guilherme") não é
-    # apresentável no certificado.
+    # apresentável no certificado. CPF é usado no certificado modelo "nr".
     if "users" in inspector.get_table_names():
         with engine.connect() as conn:
             user_columns = [c['name'] for c in inspect(engine).get_columns('users')]
-            if "full_name" not in user_columns:
-                conn.execute(text("ALTER TABLE users ADD COLUMN full_name VARCHAR"))
+            for col in ("full_name", "cpf"):
+                if col not in user_columns:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} VARCHAR"))
+                    conn.commit()
+
+    # Modelo de certificado "nr" (formal, com selo NR-XX e conteúdo
+    # programático em página própria) — alternativa ao modelo padrão (ondas).
+    if "courses" in inspector.get_table_names():
+        with engine.connect() as conn:
+            course_columns = [c['name'] for c in inspect(engine).get_columns('courses')]
+            if "certificate_style" not in course_columns:
+                conn.execute(text("ALTER TABLE courses ADD COLUMN certificate_style VARCHAR DEFAULT 'default'"))
+                conn.commit()
+            for col in ("instructor_name", "instructor_role", "instructor_registration"):
+                if col not in course_columns:
+                    conn.execute(text(f"ALTER TABLE courses ADD COLUMN {col} VARCHAR"))
+                    conn.commit()
+            if "content_topics" not in course_columns:
+                conn.execute(text("ALTER TABLE courses ADD COLUMN content_topics TEXT"))
                 conn.commit()
 
     for _table in ("teams", "users"):
@@ -468,6 +486,7 @@ def _init_db_locked():
             db.add(course)
 
         _seed_nr_quiz_questions(db)
+        _seed_nr_certificate_data(db)
 
         db.commit()
 
@@ -639,3 +658,65 @@ def _seed_nr_quiz_questions(db):
                 correct_option=q["correct_option"],
                 timestamp=0,
             ))
+
+
+# Conteúdo programático (página própria do certificado modelo "nr") — só
+# temos o texto real de NR-17 e NR-26, tirado do CERTIFICADO .docx que a
+# Iza mandou (NR-17 já sem o trecho de proteção de máquina que estava
+# colado por engano no arquivo original). As outras 4 NRs ficam sem
+# conteúdo até ela mandar o certificado real de cada uma ou preencher
+# direto no formulário do curso.
+_NR_CONTENT_TOPICS = {
+    "NR-17 Ergonimia": [
+        "Introdução a NR-17", "Conceitos básicos de ergonomia", "Princípios ergonômicos gerais",
+        "Riscos ergonômicos", "Análise do ambiente de trabalho", "Ergonomia e organização do trabalho",
+        "Uso de ferramentas e equipamentos adequados", "Posturas e movimentos",
+        "Levantamento e transporte de cargas", "Mobiliário e equipamentos",
+        "Prevenção de lesões e doenças relacionadas à ergonomia", "Medidas preventivas e corretivas",
+        "Monitoramento e avaliação de melhorias",
+    ],
+    "NR-26 Sinalização de segurança": [
+        "Conhecimento da Norma", "Tipos de Sinalização – Cor e Símbolos",
+        "Ficha de Dados de Segurança – Químicos", "Aplicação e Prática",
+        "Implantação de Manutenção", "Conformidade Legal",
+    ],
+}
+
+# Mesmo instrutor nos dois certificados de referência que a Iza mandou —
+# assume-se o mesmo pros 6 cursos de NR até ela corrigir algum
+# individualmente pelo formulário do curso.
+_NR_INSTRUCTOR = {
+    "name": "Maiara Martins",
+    "role": "Instrutor/Responsável técnico",
+    "registration": "Registro 0028944/PR",
+}
+
+
+def _seed_nr_certificate_data(db):
+    """Liga o modelo de certificado "nr" (formal, com selo NR-XX) nos 6
+    cursos de NR, com o instrutor e o conteúdo programático (quando já
+    temos o texto real). Só preenche campo que ainda está vazio — não
+    sobrescreve o que a Iza já tiver customizado pela tela do curso."""
+    import models
+    nr_course_titles = [
+        "NR-35 Trabalho em altura",
+        "NR-18 Segurança e saúde no trabalho na indústria da construção",
+        "NR-33 Segurança e saúde no trabalho em espaços confinados",
+        "NR-17 Ergonimia",
+        "NR-20 Inflamáveis",
+        "NR-26 Sinalização de segurança",
+    ]
+    for title in nr_course_titles:
+        course = db.query(models.Course).filter(models.Course.title == title).first()
+        if not course:
+            continue
+        if not course.certificate_style or course.certificate_style == "default":
+            course.certificate_style = "nr"
+        if not course.instructor_name:
+            course.instructor_name = _NR_INSTRUCTOR["name"]
+        if not course.instructor_role:
+            course.instructor_role = _NR_INSTRUCTOR["role"]
+        if not course.instructor_registration:
+            course.instructor_registration = _NR_INSTRUCTOR["registration"]
+        if not course.content_topics and title in _NR_CONTENT_TOPICS:
+            course.content_topics = "\n".join(_NR_CONTENT_TOPICS[title])

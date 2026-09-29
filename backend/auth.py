@@ -55,6 +55,7 @@ class TokenData(BaseModel):
 class UserCreate(BaseModel):
     username: str
     full_name: str
+    cpf: Optional[str] = None  # usado no certificado modelo "nr" (ex.: NR-17, NR-26)
     email: str
     password: str
     department: str
@@ -180,6 +181,7 @@ def register_user(db: Session, user: UserCreate):
     db_user = models.User(
         username=user.username,
         full_name=user.full_name,
+        cpf=(user.cpf or "").strip() or None,
         email=user.email,
         hashed_password=hashed_password,
         department=user.department,

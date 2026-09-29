@@ -35,6 +35,11 @@ def create_course(
     is_standard_training: bool = Form(False),
     validity_months: int = Form(None),
     workload_hours: int = Form(None),
+    certificate_style: str = Form("default"),
+    instructor_name: str = Form(None),
+    instructor_role: str = Form(None),
+    instructor_registration: str = Form(None),
+    content_topics: str = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_super_admin)
@@ -52,6 +57,11 @@ def create_course(
         is_standard_training=is_standard_training,
         validity_months=validity_months,
         workload_hours=workload_hours,
+        certificate_style=certificate_style or "default",
+        instructor_name=instructor_name,
+        instructor_role=instructor_role,
+        instructor_registration=instructor_registration,
+        content_topics=content_topics,
         certificate_template_url=cert_path,
     )
     db.add(course)
@@ -68,6 +78,11 @@ def update_course(
     is_standard_training: bool = Form(False),
     validity_months: int = Form(None),
     workload_hours: int = Form(None),
+    certificate_style: str = Form("default"),
+    instructor_name: str = Form(None),
+    instructor_role: str = Form(None),
+    instructor_registration: str = Form(None),
+    content_topics: str = Form(None),
     certificate_template: UploadFile = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_super_admin)
@@ -81,6 +96,11 @@ def update_course(
     course.is_standard_training = is_standard_training
     course.validity_months = validity_months
     course.workload_hours = workload_hours
+    course.certificate_style = certificate_style or "default"
+    course.instructor_name = instructor_name
+    course.instructor_role = instructor_role
+    course.instructor_registration = instructor_registration
+    course.content_topics = content_topics
 
     if certificate_template and certificate_template.filename:
         check_upload_size(certificate_template.size or 0)

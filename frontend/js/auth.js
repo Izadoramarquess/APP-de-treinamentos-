@@ -116,6 +116,7 @@ Object.assign(App, {
             <h2 style="margin-bottom:1.5rem;font-weight:700;font-size:1.35rem;color:var(--primary)">Solicitar acesso</h2>
             <form id="reg-form">
                 <div class="form-group"><label>Nome completo</label><input type="text" id="r-fullname" class="form-control" required></div>
+                <div class="form-group"><label>CPF (opcional)</label><input type="text" id="r-cpf" class="form-control" placeholder="000.000.000-00"></div>
                 <div class="form-group"><label>Nome de usuário</label><input type="text" id="r-user" class="form-control" required></div>
                 <div class="form-group"><label>Empresa</label>
                     <select id="r-company" class="form-control" required>
@@ -134,7 +135,7 @@ Object.assign(App, {
         document.getElementById('reg-form').onsubmit = async (e) => {
             e.preventDefault();
             const btn=e.target.querySelector('button'); btn.disabled=true; btn.textContent='Enviando...';
-            const payload={username:document.getElementById('r-user').value,full_name:document.getElementById('r-fullname').value,email:document.getElementById('r-email').value,password:document.getElementById('r-pass').value,department:document.getElementById('r-dept').value,company_id:parseInt(document.getElementById('r-company').value,10)};
+            const payload={username:document.getElementById('r-user').value,full_name:document.getElementById('r-fullname').value,cpf:document.getElementById('r-cpf').value,email:document.getElementById('r-email').value,password:document.getElementById('r-pass').value,department:document.getElementById('r-dept').value,company_id:parseInt(document.getElementById('r-company').value,10)};
             const res=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
             if(res.ok){alert('Solicitação enviada! Aguarde aprovação.');this.showView('login');}
             else{const d=await res.json();alert(d.detail||d.error||'Erro no registro.');btn.disabled=false;btn.textContent='Enviar solicitação';}

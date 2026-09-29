@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 import models
 from deps import get_db, get_current_user, authorize, iso_utc, _mark_module_complete, _check_and_issue_course_certificate, require_enrolled, require_enrolled_in_module, get_led_team_ids
-from certificate_pdf import generate_certificate_pdf
+from certificate_pdf import generate_certificate_pdf, generate_nr_certificate_pdf
 
 router = APIRouter()
 
@@ -242,20 +242,39 @@ def download_certificate(
     # leva a logo/nome da empresa de quem tirou o certificado, não do curso.
     company_logo_url = owner.company.logo_url if owner and owner.company else None
     company_name = owner.company.name if owner and owner.company else None
-    pdf_bytes = generate_certificate_pdf(
-        username=(owner.full_name or owner.username) if owner else "—",
-        course_title=course.title if course else "—",
-        issued_at=cert.issued_at,
-        expires_at=cert.expires_at,
-        certificate_template_url=course.certificate_template_url if course else None,
-        company_logo_url=company_logo_url,
-        company_name=company_name,
-        workload_hours=course.workload_hours if course else None,
-        course_content=course.description if course else None,
-        signatory_name=owner.company.signatory_name if owner and owner.company else None,
-        signatory_role=owner.company.signatory_role if owner and owner.company else None,
-        city=owner.company.city if owner and owner.company else None,
-    )
+    full_name = (owner.full_name or owner.username) if owner else "—"
+
+    if course and course.certificate_style == "nr":
+        pdf_bytes = generate_nr_certificate_pdf(
+            full_name=full_name,
+            cpf=owner.cpf if owner else None,
+            course_title=course.title,
+            issued_at=cert.issued_at,
+            workload_hours=course.workload_hours,
+            company_name=company_name,
+            company_cnpj=owner.company.cnpj if owner and owner.company else None,
+            city=owner.company.city if owner and owner.company else None,
+            company_logo_url=company_logo_url,
+            instructor_name=course.instructor_name,
+            instructor_role=course.instructor_role,
+            instructor_registration=course.instructor_registration,
+            content_topics=course.content_topics,
+        )
+    else:
+        pdf_bytes = generate_certificate_pdf(
+            username=full_name,
+            course_title=course.title if course else "—",
+            issued_at=cert.issued_at,
+            expires_at=cert.expires_at,
+            certificate_template_url=course.certificate_template_url if course else None,
+            company_logo_url=company_logo_url,
+            company_name=company_name,
+            workload_hours=course.workload_hours if course else None,
+            course_content=course.description if course else None,
+            signatory_name=owner.company.signatory_name if owner and owner.company else None,
+            signatory_role=owner.company.signatory_role if owner and owner.company else None,
+            city=owner.company.city if owner and owner.company else None,
+        )
     safe_course_name = "".join(ch if ch.isalnum() else "_" for ch in (course.title if course else "certificado"))
     return Response(
         content=pdf_bytes,

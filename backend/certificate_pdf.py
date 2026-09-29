@@ -5,6 +5,7 @@ vira o fundo da página e o texto é sobreposto; senão usa o layout padrão
 (faixas onduladas com degradê, alinhado à esquerda — modelo pedido pela
 Iza, copiando um certificado de referência que ela mandou)."""
 import os
+import re
 from io import BytesIO
 
 from reportlab.lib.pagesizes import landscape, A4
@@ -392,3 +393,180 @@ def _data_extenso(issued_at, city):
         dia_semana = DIAS_SEMANA_PT[issued_at.weekday()]
         base = f"{dia_semana}, {issued_at.day} de {MESES_PT[issued_at.month]} de {issued_at.year}"
     return f"{city}, {base}" if city else base.capitalize()
+
+
+# ============================================================
+# Modelo "nr" — cópia do certificado formal que já era usado pra
+# treinamento de Normas Regulamentadoras antes do GeoTrilha existir
+# (fundo com textura sutil, selo amarelo NR-XX, fitas douradas nos
+# cantos, conteúdo programático em página própria). Reconstruído a
+# partir do .docx real que a Iza mandou (imagens extraídas direto do
+# arquivo, posições/tamanhos lidos do XML do documento) — não foi
+# possível renderizar o .docx original pra conferir pixel a pixel (sem
+# LibreOffice neste ambiente), então o layout é uma reconstrução fiel
+# aos elementos e à estrutura do texto, não uma cópia certificadamente
+# exata posição-a-posição.
+NR_YELLOW = HexColor("#f5ca00")
+NR_RED = HexColor("#b50102")
+NR_BLACK = HexColor("#1a1a1a")
+NR_TEXT = HexColor("#1a1a1a")
+NR_BG_PATH = os.path.join(ASSETS_DIR, "nr_certificate_bg.jpg")
+NR_RIBBON_PATH = os.path.join(ASSETS_DIR, "nr_ribbon.png")
+
+
+def _nr_code_from_title(course_title):
+    m = re.search(r"NR-?\s?(\d+)", course_title or "", re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def _draw_nr_badge(c, cx, cy, size, nr_number):
+    r = size / 2
+    p = c.beginPath()
+    p.moveTo(cx, cy + r)
+    p.lineTo(cx + r, cy)
+    p.lineTo(cx, cy - r)
+    p.lineTo(cx - r, cy)
+    p.close()
+    c.setFillColor(NR_YELLOW)
+    c.setStrokeColor(NR_BLACK)
+    c.setLineWidth(size * 0.05)
+    c.drawPath(p, fill=1, stroke=1)
+    c.setFillColor(NR_BLACK)
+    c.setFont(FONT_BOLD, size * 0.30)
+    c.drawCentredString(cx, cy + size * 0.05, "NR")
+    if nr_number:
+        c.setFillColor(NR_RED)
+        c.setFont(FONT_BOLD, size * 0.32)
+        c.drawCentredString(cx, cy - size * 0.30, nr_number)
+
+
+def _draw_nr_background(c, w, h, nr_number):
+    if os.path.isfile(NR_BG_PATH):
+        c.drawImage(NR_BG_PATH, 0, 0, width=w, height=h, preserveAspectRatio=False)
+    else:
+        c.setFillColor(HexColor("#ffffff"))
+        c.rect(0, 0, w, h, fill=1, stroke=0)
+    if os.path.isfile(NR_RIBBON_PATH):
+        ribbon = ImageReader(NR_RIBBON_PATH)
+        rs = 4.2 * cm
+        c.drawImage(ribbon, 0.2 * cm, 0.2 * cm, width=rs, height=rs, mask="auto", preserveAspectRatio=True)
+        c.saveState()
+        c.translate(w, 0)
+        c.scale(-1, 1)
+        c.drawImage(ribbon, 0.2 * cm, 0.2 * cm, width=rs, height=rs, mask="auto", preserveAspectRatio=True)
+        c.restoreState()
+    _draw_nr_badge(c, 3.85 * cm, h - 2.1 * cm, 2.6 * cm, nr_number)
+
+
+def _draw_nr_logo(c, w, h, company_logo_url):
+    logo_path = _template_path(company_logo_url) or (LOGO_PATH if os.path.isfile(LOGO_PATH) else None)
+    if not logo_path:
+        return
+    img = ImageReader(logo_path)
+    iw, ih = img.getSize()
+    logo_h = 2.2 * cm
+    logo_w = min(logo_h * (iw / ih), 6.5 * cm)
+    logo_h = logo_w * (ih / iw)
+    c.drawImage(img, w - logo_w - 1.2 * cm, h - logo_h - 0.6 * cm, width=logo_w, height=logo_h,
+                preserveAspectRatio=True, mask="auto")
+
+
+def generate_nr_certificate_pdf(full_name, cpf, course_title, issued_at, workload_hours,
+                                 company_name, company_cnpj, city,
+                                 company_logo_url, instructor_name, instructor_role,
+                                 instructor_registration, content_topics) -> bytes:
+    buf = BytesIO()
+    page_size = landscape(A4)
+    w, h = page_size
+    c = canvas.Canvas(buf, pagesize=page_size)
+    nr_number = _nr_code_from_title(course_title)
+
+    # ---- página 1: certificado ----
+    _draw_nr_background(c, w, h, nr_number)
+    _draw_nr_logo(c, w, h, company_logo_url)
+
+    center = w / 2
+    max_width = w - 7 * cm
+    y = h - 5.2 * cm
+
+    c.setFillColor(NR_TEXT)
+    c.setFont(FONT_BOLD, 20)
+    c.drawCentredString(center, y, "ESTE CERTIFICADO COMPROVA QUE")
+    y -= 1.6 * cm
+
+    c.setFont(FONT_BOLD, 26)
+    c.drawCentredString(center, y, (full_name or "—").upper())
+    y -= 1.5 * cm
+
+    partes = []
+    if cpf:
+        partes.append(f"PORTADOR DO CPF: {cpf};")
+    course_nr = f"NR-{nr_number}" if nr_number else ""
+    data_str = ""
+    if issued_at:
+        data_str = f"{issued_at.day:02d} DE {MESES_PT[issued_at.month].upper()} DE {issued_at.year}"
+    trecho = f'PARTICIPOU DO TREINAMENTO "{(course_title or "").upper()}"'
+    if data_str:
+        trecho += f" REALIZADO NO DIA {data_str}"
+    if workload_hours:
+        trecho += f" TOTALIZANDO {workload_hours:02d} HORAS"
+    trecho += f" CONFORME REGE A NORMA REGULAMENTADORA – {course_nr}," if course_nr else ","
+    if company_name:
+        trecho += f" PROMOVIDO PELA EMPRESA {company_name.upper()}"
+        if company_cnpj:
+            trecho += f" (CNPJ: {company_cnpj})"
+    trecho += "."
+    partes.append(trecho)
+    paragrafo = " ".join(partes)
+
+    c.setFont(FONT_REGULAR, 13)
+    for line in _wrap_text(c, paragrafo, FONT_REGULAR, 13, max_width):
+        c.drawCentredString(center, y, line)
+        y -= 0.62 * cm
+
+    y -= 0.8 * cm
+    if city or issued_at:
+        c.setFont(FONT_REGULAR, 12)
+        loc = f"{city.upper()}, " if city else ""
+        c.drawCentredString(center, y, f"{loc}{data_str}" if data_str else loc.rstrip(", "))
+    y -= 2.0 * cm
+
+    if instructor_name:
+        c.setFont(FONT_BOLD, 13)
+        c.drawCentredString(center, y, instructor_name)
+        y -= 0.55 * cm
+    if instructor_role:
+        c.setFont(FONT_REGULAR, 10.5)
+        c.drawCentredString(center, y, instructor_role)
+        y -= 0.45 * cm
+    if instructor_registration:
+        c.setFont(FONT_REGULAR, 10.5)
+        c.drawCentredString(center, y, instructor_registration)
+
+    c.setFont(FONT_REGULAR, 10)
+    c.drawCentredString(center, 1.6 * cm, "Participante")
+
+    # ---- página 2: conteúdo programático (só se tiver o que mostrar) ----
+    topics = [t.strip(" -•;") for t in (content_topics or "").splitlines() if t.strip()]
+    if topics:
+        c.showPage()
+        _draw_nr_background(c, w, h, nr_number)
+        _draw_nr_logo(c, w, h, company_logo_url)
+        c.setFillColor(NR_TEXT)
+        c.setFont(FONT_BOLD, 18)
+        c.drawCentredString(center, h - 4.5 * cm, "CONTEÚDO PROGRAMÁTICO")
+        y = h - 6 * cm
+        c.setFont(FONT_REGULAR, 12.5)
+        for topic in topics:
+            for line in _wrap_text(c, f"•  {topic}", FONT_REGULAR, 12.5, max_width):
+                c.drawCentredString(center, y, line)
+                y -= 0.65 * cm
+            if y < 2 * cm:
+                c.showPage()
+                _draw_nr_background(c, w, h, nr_number)
+                _draw_nr_logo(c, w, h, company_logo_url)
+                y = h - 3 * cm
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()

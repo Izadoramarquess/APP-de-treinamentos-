@@ -21,6 +21,7 @@ class Company(Base):
     signatory_name = Column(String, nullable=True)
     signatory_role = Column(String, nullable=True)
     city = Column(String, nullable=True)
+    cnpj = Column(String, nullable=True)
 
 class Team(Base):
     __tablename__ = "teams"
@@ -49,6 +50,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     full_name = Column(String, nullable=True)  # usado no certificado — username sozinho não é apresentável
+    cpf = Column(String, nullable=True)  # usado no certificado modelo "NR" (ex.: NR-17, NR-26)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     role = Column(String, default="usuario") # 'super_admin', 'admin', 'lideranca', 'usuario'
@@ -90,6 +92,15 @@ class Course(Base):
     validity_months = Column(Integer, nullable=True)
     certificate_template_url = Column(String, nullable=True)
     workload_hours = Column(Integer, nullable=True)
+    # "default" = modelo com ondas; "nr" = modelo formal (fundo com textura,
+    # selo NR-XX extraído do título, lista de conteúdo programático em
+    # página própria) — cópia do certificado que já era usado pra treinamento
+    # de Normas Regulamentadoras antes do GeoTrilha existir.
+    certificate_style = Column(String, default="default")
+    instructor_name = Column(String, nullable=True)
+    instructor_role = Column(String, nullable=True)
+    instructor_registration = Column(String, nullable=True)
+    content_topics = Column(Text, nullable=True)  # um tópico por linha — página 2 do certificado "nr"
 
     modules = relationship("Module", back_populates="course", order_by="Module.order")
     enrollments = relationship("Enrollment", back_populates="course")
@@ -256,6 +267,11 @@ class CourseSchema(BaseModel):
     validity_months: Optional[int] = None
     certificate_template_url: Optional[str] = None
     workload_hours: Optional[int] = None
+    certificate_style: str = "default"
+    instructor_name: Optional[str] = None
+    instructor_role: Optional[str] = None
+    instructor_registration: Optional[str] = None
+    content_topics: Optional[str] = None
     modules: List[ModuleSchema] = []
     class Config: from_attributes = True
 
@@ -263,6 +279,7 @@ class UserSchema(BaseModel):
     id: int
     username: str
     full_name: Optional[str] = None
+    cpf: Optional[str] = None
     email: str
     role: str
     status: str
@@ -284,6 +301,7 @@ class CompanySchema(BaseModel):
     signatory_name: Optional[str] = None
     signatory_role: Optional[str] = None
     city: Optional[str] = None
+    cnpj: Optional[str] = None
     created_at: datetime.datetime
     class Config: from_attributes = True
 

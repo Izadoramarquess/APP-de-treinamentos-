@@ -70,6 +70,7 @@ Object.assign(App, {
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">Convidar Novo Usuário</h3>
             <form id="invite-user-form">
                 <div class="form-group"><label>Nome completo</label><input type="text" id="iu-fullname" class="form-control"></div>
+                <div class="form-group"><label>CPF (opcional)</label><input type="text" id="iu-cpf" class="form-control" placeholder="000.000.000-00"></div>
                 <div class="form-group"><label>Nome de usuário</label><input type="text" id="iu-user" class="form-control" required></div>
                 <div class="form-group"><label>E-mail corporativo</label><input type="email" id="iu-email" class="form-control" required></div>
                 ${companySelect}
@@ -98,6 +99,7 @@ Object.assign(App, {
             const fd=new FormData();
             fd.append('username',document.getElementById('iu-user').value);
             fd.append('full_name',document.getElementById('iu-fullname').value);
+            fd.append('cpf',document.getElementById('iu-cpf').value);
             fd.append('email',document.getElementById('iu-email').value);
             fd.append('department',document.getElementById('iu-dept').value);
             const roleEl=document.getElementById('iu-role'); if(roleEl) fd.append('role',roleEl.value);
@@ -402,6 +404,7 @@ Object.assign(App, {
             <div id="courses-wrapper"><div class="loader">Carregando</div></div>`;
         const res = await fetch('/courses',{headers:this.apiHeaders()});
         const courses=await res.json();
+        this._coursesCache = courses; // usado por showEditCourseModal pra não passar 10 parâmetros no onclick
         const wrapper=document.getElementById('courses-wrapper'); wrapper.innerHTML='';
         if(!courses.length){wrapper.innerHTML='<div class="empty-state"><div class="empty-icon">📖</div><p>Nenhum curso criado ainda.</p></div>';return;}
         document.getElementById('c-search').oninput=(e)=>{
@@ -417,7 +420,7 @@ Object.assign(App, {
                     <p style="color:var(--text-dim);font-size:0.83rem;margin:0">${c.description||'Sem descrição.'}</p>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${isSuper?this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id},'${c.title.replace(/'/g,"\\'")}','${(c.description||'').replace(/'/g,"\\'")}',${!!c.is_standard_training},${c.validity_months||0},${c.workload_hours||0})`):''}
+                    ${isSuper?this.actionBtn('✏️ Editar',`App.showEditCourseModal(${c.id})`):''}
                     ${isSuper?this.actionBtn('🗑',`App.deleteCourse(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'danger'):''}
                     ${this.actionBtn('Módulos →',`App.renderAdminModules(${c.id},'${c.title.replace(/'/g,"\\'")}')`, 'primary')}
                 </div>
@@ -425,20 +428,33 @@ Object.assign(App, {
         });
     },
 
-    async _courseModal(id, title, desc, is_std, valMonths, workloadHours, isEdit) {
+    async _courseModal(course, isEdit) {
+        course = course || {};
         const modal=document.getElementById('modal-container'), body=document.getElementById('modal-body');
         body.className='';
+        const style = course.certificate_style || 'default';
         body.innerHTML=`<h3 style="margin-bottom:1rem;color:var(--primary)">${isEdit?'Editar':'Novo'} Curso</h3>
             <form id="cform">
-                <div class="form-group"><label>Título</label><input type="text" id="c-title" class="form-control" value="${title||''}" required></div>
-                <div class="form-group"><label>Descrição</label><textarea id="c-desc" class="form-control" rows="3">${desc||''}</textarea></div>
+                <div class="form-group"><label>Título</label><input type="text" id="c-title" class="form-control" value="${(course.title||'').replace(/"/g,'&quot;')}" required></div>
+                <div class="form-group"><label>Descrição</label><textarea id="c-desc" class="form-control" rows="3">${course.description||''}</textarea></div>
                 <div class="form-group" style="display:flex;gap:8px;align-items:center">
-                    <input type="checkbox" id="c-std" ${is_std?'checked':''} style="width:16px;height:16px;accent-color:var(--primary-light)">
+                    <input type="checkbox" id="c-std" ${course.is_standard_training?'checked':''} style="width:16px;height:16px;accent-color:var(--primary-light)">
                     <label style="margin:0;font-size:0.88rem">Treinamento obrigatório padronizado</label>
                 </div>
-                <div class="form-group"><label>Validade do certificado (meses)</label><input type="number" id="c-val" class="form-control" value="${valMonths||''}" placeholder="Padrão: 12"></div>
-                <div class="form-group"><label>Carga horária (horas)</label><input type="number" id="c-workload" class="form-control" value="${workloadHours||''}" placeholder="Ex: 8"></div>
+                <div class="form-group"><label>Validade do certificado (meses)</label><input type="number" id="c-val" class="form-control" value="${course.validity_months||''}" placeholder="Padrão: 12"></div>
+                <div class="form-group"><label>Carga horária (horas)</label><input type="number" id="c-workload" class="form-control" value="${course.workload_hours||''}" placeholder="Ex: 8"></div>
                 <div class="form-group"><label>Template de certificado (opcional)</label><input type="file" id="c-cert" class="form-control" accept="image/*"></div>
+                <p style="font-size:0.78rem;color:var(--text-dim);margin:1rem 0 0.4rem">Modelo de certificado:</p>
+                <div class="form-group"><label>Estilo</label>
+                    <select id="c-cert-style" class="form-control">
+                        <option value="default" ${style==='default'?'selected':''}>Padrão (ondas)</option>
+                        <option value="nr" ${style==='nr'?'selected':''}>NR (selo amarelo + conteúdo programático em página própria)</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Instrutor/Responsável (modelo NR)</label><input type="text" id="c-instr-name" class="form-control" value="${course.instructor_name||''}" placeholder="Ex: Maiara Martins"></div>
+                <div class="form-group"><label>Cargo do instrutor (modelo NR)</label><input type="text" id="c-instr-role" class="form-control" value="${course.instructor_role||''}" placeholder="Ex: Instrutor/Responsável técnico"></div>
+                <div class="form-group"><label>Registro profissional (modelo NR)</label><input type="text" id="c-instr-reg" class="form-control" value="${course.instructor_registration||''}" placeholder="Ex: Registro 0028944/PR"></div>
+                <div class="form-group"><label>Conteúdo programático (modelo NR — um tópico por linha)</label><textarea id="c-topics" class="form-control" rows="4" placeholder="Introdução a NR-17&#10;Conceitos básicos de ergonomia&#10;...">${course.content_topics||''}</textarea></div>
                 <div style="display:flex;gap:0.5rem;margin-top:1rem">
                     <button type="submit" class="btn btn-primary" style="flex:1">${isEdit?'Salvar':'Criar'}</button>
                     <button type="button" class="btn btn-secondary" style="flex:1" onclick="App.closeModal()">Cancelar</button>
@@ -452,13 +468,18 @@ Object.assign(App, {
             const val=document.getElementById('c-val').value; if(val) fd.append('validity_months',val);
             const workload=document.getElementById('c-workload').value; if(workload) fd.append('workload_hours',workload);
             const certFile=document.getElementById('c-cert').files[0]; if(certFile) fd.append('certificate_template',certFile);
-            await fetch(isEdit?`/courses/${id}`:'/courses',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
+            fd.append('certificate_style',document.getElementById('c-cert-style').value);
+            fd.append('instructor_name',document.getElementById('c-instr-name').value);
+            fd.append('instructor_role',document.getElementById('c-instr-role').value);
+            fd.append('instructor_registration',document.getElementById('c-instr-reg').value);
+            fd.append('content_topics',document.getElementById('c-topics').value);
+            await fetch(isEdit?`/courses/${course.id}`:'/courses',{method:isEdit?'PUT':'POST',headers:this.apiHeaders(),body:fd});
             this.closeModal(); this.renderAdminCourses();
         };
         modal.classList.remove('hidden');
     },
-    showCreateCourseModal()                                            { this._courseModal(null,'','',false,null,null,false); },
-    showEditCourseModal(id,title,desc,is_std,valMonths,workloadHours)  { this._courseModal(id,title,desc,is_std,valMonths,workloadHours,true); },
+    showCreateCourseModal()  { this._courseModal(null,false); },
+    showEditCourseModal(id)  { this._courseModal((this._coursesCache||[]).find(c=>c.id===id),true); },
     async deleteCourse(id, title) {
         if(!confirm(`Excluir o curso "${title}"?\nTodos os módulos serão removidos.`)) return;
         await fetch(`/courses/${id}`,{method:'DELETE',headers:this.apiHeaders()});
