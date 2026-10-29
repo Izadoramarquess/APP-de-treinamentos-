@@ -417,7 +417,12 @@ def resend_invite(user_id: int, db: Session = Depends(get_db), current_user: mod
         raise HTTPException(status_code=403, detail="Você só pode reenviar convites para membros da sua própria equipe.")
     check_same_company(current_user, user.company_id, "usuário")
 
-    if not auth.is_allowed_email_domain(user.email): raise HTTPException(status_code=400, detail="Domínio inválido.")
+    # Mesma regra de _create_invite_record: só admin precisa de e-mail
+    # corporativo. Antes isso valia pra todo papel, então convite criado pra
+    # um e-mail pessoal (Gmail, etc.) nunca podia ser reenviado depois de
+    # expirar.
+    if user.role == "admin" and not auth.is_allowed_email_domain(user.email):
+        raise HTTPException(status_code=400, detail=f"Apenas e-mails corporativos ({auth.allowed_email_domains_text()}) podem ser administradores.")
 
     invite_token = secrets.token_urlsafe(32)
     user.invite_token = invite_token
