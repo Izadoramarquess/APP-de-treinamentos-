@@ -158,10 +158,22 @@ Object.assign(App, {
                 btn.disabled=false; btn.textContent='Importar';
                 return;
             }
+            // Sem SMTP configurado nenhum e-mail sai sozinho — o link de cada
+            // convite só existia na resposta da API e a tela nunca mostrava,
+            // então o admin teria que clicar em "Reenviar" usuário por usuário.
+            const withLinks=data.results.filter(r=>r.status==='ok'&&r.invite_link);
             resultsEl.innerHTML=`<p style="font-weight:600;margin-bottom:0.5rem">${data.created} criado(s), ${data.errors} erro(s) de ${data.total} linha(s)</p>` +
+                (withLinks.length?`<button type="button" id="bi-download-links" class="btn btn-secondary" style="width:100%;margin-bottom:0.5rem">⬇ Baixar links dos convites (CSV)</button>`:'') +
                 data.results.map(r=>`<div style="padding:5px 8px;border-radius:6px;font-size:0.78rem;margin-bottom:3px;background:${r.status==='ok'?'#22c55e18':'#ef444418'};color:${r.status==='ok'?'#16a34a':'#dc2626'}">
                     Linha ${r.line} — ${r.email}: ${r.status==='ok'?'✓ convite criado':'✗ '+r.detail}
                 </div>`).join('');
+            const dl=document.getElementById('bi-download-links');
+            if(dl) dl.onclick=()=>{
+                const csv='﻿email,link_do_convite\r\n'+withLinks.map(r=>`${r.email},${r.invite_link}`).join('\r\n')+'\r\n';
+                const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
+                const a=document.createElement('a'); a.href=url; a.download='links_dos_convites.csv';
+                document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+            };
             btn.textContent='Importar novamente'; btn.disabled=false;
             if(data.created>0) this.renderAdminUsers();
         };
